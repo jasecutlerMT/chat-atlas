@@ -57,6 +57,7 @@ export function TopBar({
         >
           <AtlasLogo />
           <span className="logo-text">Chat Atlas</span>
+          {updateInfo && <span className="version-tag">v{updateInfo.local}</span>}
         </button>
         <nav className="tabs" aria-label="Views">
           {TABS.map((t) => (

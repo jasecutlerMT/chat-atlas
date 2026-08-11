@@ -184,6 +184,31 @@ export async function makeFixtures() {
         return m;
       })(),
     ]),
+    // A tool-heavy conversation like real Claude usage: text blocks mixed
+    // with tool_use / tool_result / thinking machinery that must never
+    // surface as "[tool use content]" placeholders anywhere.
+    conv(13, "Understanding how I'll visualise my chat history", '2026-06-27T09:00:00.000000Z', '2026-06-27T09:40:00.000000Z', [
+      msg('human', "Help me understand the best way to visualise my chat history. I'll need a proper tool for it.", '2026-06-27T09:00:00.000000Z'),
+      {
+        uuid: msgId(),
+        text: '',
+        content: [
+          { type: 'thinking', thinking: 'hidden reasoning that must never surface' },
+          {
+            type: 'text',
+            text: '# Visualising your chat history\n\nA good visualisation needs three layers working together, and the order you build them in matters more than most people expect. The first layer is a timeline, because human memory is anchored in time: people rarely remember the exact words of a conversation, but they almost always remember roughly when it happened, what season it was, or what else was going on in their life at the time. A horizontal axis of dots, one per conversation, exploits that anchoring directly and costs almost nothing to learn.\n\nThe second layer is grouping by topic, so related conversations sit near each other instead of being scattered across months. Grouping is where most tools go wrong, because they group by statistical similarity and then label the groups with statistical words that mean nothing to the person reading them. The labels must come from the world the reader lives in: the names of companies, people, projects and tools. If the group label is not a word the reader would have said out loud, the group is decoration rather than navigation.\n\nThe third layer is search, because the first two layers only ever narrow things down — the last step of every real retrieval is finding the exact sentence, and no map or grouping replaces typing three words and jumping straight to the line. Search has to tolerate typos, cover every word ever written including the contents of attachments, and land the reader on the precise message with the match highlighted, not just open the right conversation and leave them scrolling.\n\nBuild the timeline first, then the grouping, then the search, and resist the temptation to merge the three layers into one clever view that does none of the three jobs properly. Every successful history tool keeps the layers separate and lets each one hand off to the next: time narrows to a neighbourhood, topic narrows to a shelf, and search lands on the page.',
+          },
+          { type: 'tool_use', name: 'artifacts', input: { command: 'create' } },
+          { type: 'tool_result', content: 'ok' },
+          { type: 'text', text: 'The working version is in the panel above — try zooming the timeline.' },
+        ],
+        sender: 'assistant',
+        created_at: '2026-06-27T09:05:00.000000Z',
+        updated_at: '2026-06-27T09:05:00.000000Z',
+        attachments: [],
+        files: [],
+      },
+    ]),
     // Deliberately corrupted: no uuid — must be skipped with a readable reason.
     { name: 'Corrupted conversation', created_at: '2026-06-26T00:00:00.000000Z', updated_at: '2026-06-26T00:00:00.000000Z', chat_messages: [] },
   ];

@@ -24,7 +24,10 @@ const TITLE_GENERIC = new Set(
     'build building built write writing wrote written fix fixing fixed improve improving improved compare comparing ' +
     'compared reviewing reviewed summarise summarize explain explaining explained check checking checked find finding ' +
     'found show showing showed give giving gave turn turning turned convert converting converted rename renames ' +
-    'renaming renamed follow-up followup thinking thoughts through today tomorrow yesterday ' + +
+    'renaming renamed follow-up followup thinking thoughts through today tomorrow yesterday ' +
+    'understanding learning building exploring choosing getting starting using working setting planning ' +
+    'talking asking looking trying running managing designing developing testing debugging troubleshooting ' +
+    'installing configuring connecting integrating automating organising organizing visualising visualizing ' + +
     'writing write rewrite summary practice practise session sessions week weekly day daily month monthly ' +
     'list checklist framework playbook cheat sheet comparison table role job jobs career work project ' +
     'monday tuesday wednesday thursday friday saturday sunday january february march april may june july ' +
@@ -80,8 +83,12 @@ function isCapToken(tok: string): boolean {
   return CAP_WORD.test(tok) || ACRONYM.test(tok);
 }
 
+/** "I'll", "You're", "Don't", "It's" — contractions are grammar, never names. */
+const CONTRACTION = /^[A-Za-z]+['’](ll|d|m|ve|re|s|t)$/i;
+
 function isGenericWord(word: string): boolean {
-  const w = word.toLowerCase();
+  if (CONTRACTION.test(word)) return true;
+  const w = word.toLowerCase().replace(/['’]/g, '');
   return TITLE_GENERIC.has(w) || KEYWORD_STOPLIST.has(w);
 }
 

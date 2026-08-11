@@ -45,9 +45,57 @@ test('entities are detected and junk never appears', async () => {
   await expect(sidebar.locator('.side-entity', { hasText: 'Jane Smith' })).toBeVisible();
   await expect(sidebar.locator('.side-entity', { hasText: 'Salesforce' })).toBeVisible();
   const labels = await sidebar.locator('.side-entity .side-label').allTextContents();
-  for (const junk of ['Untitled', 'Conversation', 'Here', 'Subject', 'Best']) {
+  for (const junk of ['Untitled', 'Conversation', 'Here', 'Subject', 'Best', 'Understanding', "I'll", "I'm", "I'd"]) {
     expect(labels, `"${junk}" must not be an entity`).not.toContain(junk);
   }
+});
+
+test('tool machinery never pollutes titles, previews or search', async () => {
+  // The tool-heavy conversation's real prose comes through…
+  await page.locator('.side-item', { hasText: /^Document\s*\d/ }).click();
+  await expect(page.locator('.lib-row', { hasText: 'Visualising your chat history' })).toBeVisible();
+  // …and no placeholder junk appears anywhere in the library.
+  expect(await page.locator('.lib-row', { hasText: 'content]' }).count()).toBe(0);
+  await page.locator('.side-item', { hasText: 'Overview' }).click();
+  expect(await page.locator('.lib-row', { hasText: 'content]' }).count()).toBe(0);
+});
+
+test('placeholder text from old imports is cleaned up automatically', async () => {
+  // Simulate data written by an older version: placeholders inside stored
+  // message text, and the one-time-cleanup marker absent.
+  await page.evaluate(async () => {
+    await new Promise((resolve, reject) => {
+      const open = indexedDB.open('chat-atlas');
+      open.onerror = () => reject(open.error);
+      open.onsuccess = () => {
+        const db = open.result;
+        const tx = db.transaction(['conversations', 'meta'], 'readwrite');
+        const store = tx.objectStore('conversations');
+        const req = store.getAll();
+        req.onsuccess = () => {
+          const conv = req.result.find((c) => c.name === 'Cold call script practice');
+          conv.messages[1].text = '*[tool use content]*\n\n' + conv.messages[1].text + '\n\n*[tool result content]*';
+          store.put(conv);
+          tx.objectStore('meta').delete('machineryTextCleaned');
+        };
+        tx.oncomplete = () => {
+          db.close();
+          resolve();
+        };
+      };
+    });
+  });
+  await page.reload();
+  await expect(page.locator('.lib-sidebar')).toBeVisible({ timeout: 20_000 });
+  await page.waitForTimeout(1500); // let the cleanup + rebuild settle
+  await page.fill('.search-bar input', 'cold call');
+  await expect(page.locator('.result').first()).toBeVisible({ timeout: 10_000 });
+  await page.locator('.result', { hasText: 'Cold call script practice' }).first().click();
+  await expect(page.locator('.reading-pane')).toBeVisible();
+  const paneText = await page.locator('.pane-body').textContent();
+  expect(paneText).not.toContain('content]');
+  await page.keyboard.press('Escape');
+  await page.fill('.search-bar input', '');
 });
 
 test('an entity page collects its outputs and conversations', async () => {
@@ -324,6 +372,9 @@ test('the update endpoints and the Update button behave', async () => {
   // A POST without the guard header is refused.
   const status = await page.evaluate(async () => (await fetch('/__atlas/update', { method: 'POST' })).status);
   expect(status).toBe(403);
+
+  // The running version is always visible next to the logo.
+  await expect(page.locator('.version-tag')).toHaveText(`v${expected}`);
 
   // When a newer version exists, the Update button appears.
   await page.evaluate(() => window.__atlasTest.setUpdate({ local: 1, remote: 99 }));

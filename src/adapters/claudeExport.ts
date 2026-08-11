@@ -12,6 +12,21 @@ function asString(v: unknown): string {
   return typeof v === 'string' ? v : '';
 }
 
+/**
+ * Removes "*[tool use content]*"-style placeholders. Older versions of this
+ * app wrote them into stored text, and some raw exports carry similar
+ * markers; either way they are noise, not words anyone said.
+ */
+export function stripMachineryPlaceholders(text: string): string {
+  if (!text.includes('content]')) return text;
+  return text
+    .replace(/\*?\[[a-z0-9_ -]{1,40} content\]\*?/gi, '')
+    .replace(/[ \t]+\n/g, '\n')
+    .replace(/\n{3,}/g, '\n\n')
+    .replace(/(?:\s*·\s*)+(?=\s*·|\s*$)/gm, '')
+    .trim();
+}
+
 function normaliseMessage(raw: Record<string, unknown>, convName: string, skipped: SkippedItem[]): ChatMessage | null {
   const uuid = asString(raw.uuid);
   if (!uuid) {
@@ -21,26 +36,25 @@ function normaliseMessage(raw: Record<string, unknown>, convName: string, skippe
   const senderRaw = asString(raw.sender);
   const sender: 'human' | 'assistant' = senderRaw === 'human' ? 'human' : 'assistant';
 
-  // Prefer joining the structured content blocks; fall back to the flat text field.
+  // Prefer joining the structured content blocks; fall back to the flat text
+  // field. Only visible prose counts: tool activity, thinking and other
+  // machinery blocks are skipped entirely — turning them into placeholder
+  // text would pollute titles, previews, search and word counts.
   let text = '';
   if (Array.isArray(raw.content)) {
     const parts: string[] = [];
     for (const block of raw.content) {
       if (block && typeof block === 'object') {
         const b = block as Record<string, unknown>;
-        if (typeof b.text === 'string' && b.text.trim()) {
+        if ((b.type === 'text' || b.type === undefined) && typeof b.text === 'string' && b.text.trim()) {
           parts.push(b.text);
-        } else if (typeof b.thinking === 'string' && b.thinking.trim() && b.type === 'thinking') {
-          // Skip hidden thinking blocks; they are not part of the visible chat.
-        } else if (b.type && b.type !== 'text' && typeof b.type === 'string') {
-          const label = String(b.type).replace(/_/g, ' ');
-          parts.push(`*[${label} content]*`);
         }
       }
     }
     text = parts.join('\n\n').trim();
   }
   if (!text) text = asString(raw.text).trim();
+  text = stripMachineryPlaceholders(text);
 
   const attachments: Attachment[] = [];
   if (Array.isArray(raw.attachments)) {

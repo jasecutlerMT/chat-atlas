@@ -8,7 +8,7 @@
 
 import MiniSearch from 'minisearch';
 import { registerAdapter, findAdapter } from '../adapters/adapter';
-import { claudeExportAdapter } from '../adapters/claudeExport';
+import { claudeExportAdapter, stripMachineryPlaceholders } from '../adapters/claudeExport';
 import {
   getAllConversations,
   getConversation,
@@ -324,7 +324,38 @@ function runSearch(id: number, q: string, filters: SearchFilters): void {
 
 // ---- boot ----
 
+/**
+ * One-time repair of data imported by older versions, which stored
+ * "*[tool use content]*"-style placeholders inside message text. Cleans the
+ * stored conversations in place — no re-import needed.
+ */
+async function cleanStoredMachineryText(): Promise<void> {
+  const done = await getMeta<boolean>('machineryTextCleaned');
+  if (done) return;
+  const all = await getAllConversations();
+  const changed: Conversation[] = [];
+  for (const conv of all) {
+    let touched = false;
+    for (const m of conv.messages) {
+      const cleaned = stripMachineryPlaceholders(m.text);
+      if (cleaned !== m.text) {
+        m.text = cleaned;
+        m.hasCode = /```/.test(cleaned);
+        m.isLong = countWords(cleaned) > 300;
+        touched = true;
+      }
+    }
+    if (touched) changed.push(conv);
+  }
+  if (changed.length > 0) {
+    post({ t: 'progress', label: 'Tidying up old imports…', pct: 0.3 });
+    await putConversations(changed);
+  }
+  await setMeta('machineryTextCleaned', true);
+}
+
 async function init(): Promise<void> {
+  await cleanStoredMachineryText();
   const all = await getAllConversations();
   index = newIndex();
   docStore.clear();
