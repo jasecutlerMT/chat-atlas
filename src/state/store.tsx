@@ -127,6 +127,12 @@ interface StoreValue {
   turnOffSaveFolder: () => Promise<void>;
   saveAllToFolder: () => Promise<void>;
 
+  // App updates
+  updateInfo: { local: number; remote: number | null } | null;
+  updating: boolean;
+  checkForUpdates: (announce: boolean) => Promise<void>;
+  runUpdate: () => Promise<void>;
+
   theme: 'dark' | 'light';
   toggleTheme: () => void;
 
@@ -184,6 +190,8 @@ export function StoreProvider({ children }: { children: ReactNode }) {
   const [referencedFiles, setReferencedFiles] = useState<string[]>([]);
   const [storedFiles, setStoredFiles] = useState<StoredFileMeta[]>([]);
   const [saveFolderStatus, setSaveFolderStatus] = useState<SaveFolderStatus>({ state: 'off' });
+  const [updateInfo, setUpdateInfo] = useState<{ local: number; remote: number | null } | null>(null);
+  const [updating, setUpdating] = useState(false);
   const [skipped, setSkipped] = useState<SkippedItem[]>([]);
   const [workspaces, setWorkspacesState] = useState<Workspace[]>([]);
   const [scope, setScopeState] = useState<Scope>({ kind: 'all' });
@@ -758,6 +766,56 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     })();
   }, [fileMoments, saveFolderStatus, originalsByMoment, pushToast]);
 
+  // ---- app updates ----
+
+  const checkForUpdates = useCallback(
+    async (announce: boolean) => {
+      try {
+        const res = await fetch('/__atlas/update-check');
+        const info = (await res.json()) as { local: number; remote: number | null };
+        setUpdateInfo(info);
+        if (announce) {
+          if (info.remote === null) pushToast('Could not reach the update server — are you online?', 'info');
+          else if (info.remote > info.local) pushToast(`Version ${info.remote} is ready — click Update in the top bar.`, 'success');
+          else pushToast(`You're on the latest version (v${info.local}).`, 'info');
+        }
+      } catch {
+        if (announce) pushToast('Could not check for updates right now.', 'error');
+      }
+    },
+    [pushToast],
+  );
+
+  const runUpdate = useCallback(async () => {
+    if (updating) return;
+    setUpdating(true);
+    pushToast('Updating — this takes a minute. The app will refresh itself.', 'info');
+    try {
+      const res = await fetch('/__atlas/update', { method: 'POST', headers: { 'x-atlas': '1' } });
+      const body = (await res.json()) as { ok: boolean };
+      if (body.ok) {
+        pushToast('Updated! Refreshing…', 'success');
+        setTimeout(() => window.location.reload(), 1400);
+      } else {
+        setUpdating(false);
+        pushToast('The update did not finish — nothing was broken. Try again in a minute.', 'error');
+      }
+    } catch {
+      setUpdating(false);
+      pushToast('The update did not finish — nothing was broken. Try again in a minute.', 'error');
+    }
+  }, [updating, pushToast]);
+
+  useEffect(() => {
+    void checkForUpdates(false);
+    if (import.meta.env.DEV) {
+      const hooks = ((window as unknown as Record<string, unknown>).__atlasTest ?? {}) as Record<string, unknown>;
+      hooks.setUpdate = (info: unknown) => setUpdateInfo(info as { local: number; remote: number | null });
+      (window as unknown as Record<string, unknown>).__atlasTest = hooks;
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
   // Keep the watcher's capture list current, and restore the save folder once.
   useEffect(() => {
     watcherRef.current?.setDocCapture(captureDocFile, referencedFiles);
@@ -852,6 +910,10 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     resumeSaveFolder,
     turnOffSaveFolder,
     saveAllToFolder,
+    updateInfo,
+    updating,
+    checkForUpdates,
+    runUpdate,
     theme,
     toggleTheme,
     query,

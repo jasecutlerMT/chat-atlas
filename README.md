@@ -122,11 +122,26 @@ choice of:
 Every individual item has the same three options behind its download button,
 plus a copy button that grabs the full text.
 
+## Updating the app: one click
+
+When a new version of Chat Atlas exists, an orange **Update to v…** button
+appears in the top bar. Click it, wait a minute, and the app refreshes
+itself — no downloading ZIPs, no replacing folders. Clicking the Chat Atlas
+logo checks on demand and tells you either way.
+
+How it works, honestly: new versions live in a small **public** repository
+(github.com/jasecutlerMT/chat-atlas) that contains only this app's code —
+never your conversations, which don't touch GitHub at all. When you click
+Update (and once at startup, to know whether to show the button), the app's
+little local server asks that repository for the latest code. Nothing about
+you is sent; it's a plain download, like visiting a web page.
+
 ## Your privacy, concretely
 
-- The app makes **zero network requests** — no analytics, no fonts from the
-  internet, nothing. Once it's running you could unplug the internet and
-  nothing would change.
+- The app page makes **zero network requests** — no analytics, no fonts
+  from the internet, nothing. Your conversations live only on your machine.
+  The one deliberate exception, described above: the local server contacts
+  GitHub to *fetch app updates* — code comes down, nothing goes up.
 - Your conversations live in your browser's own built-in database
   (IndexedDB), on your disk, and nowhere else.
 - The git settings for this folder refuse to ever commit zip files or

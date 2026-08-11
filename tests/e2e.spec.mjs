@@ -309,6 +309,29 @@ test('the auto-save folder receives real files', async () => {
   expect(saves.some((s) => s.name === 'acme-logistics-brief.docx')).toBe(true);
 });
 
+test('the update endpoints and the Update button behave', async () => {
+  // The local server reports the app's version.
+  const version = await page.evaluate(async () => (await (await fetch('/__atlas/version')).json()).version);
+  const { readFileSync: rf } = await import('node:fs');
+  const expected = JSON.parse(rf(new URL('../version.json', import.meta.url), 'utf8')).version;
+  expect(version).toBe(expected);
+
+  // The update check degrades gracefully (remote may be null offline).
+  const check = await page.evaluate(async () => await (await fetch('/__atlas/update-check')).json());
+  expect(check.local).toBe(expected);
+  expect('remote' in check).toBe(true);
+
+  // A POST without the guard header is refused.
+  const status = await page.evaluate(async () => (await fetch('/__atlas/update', { method: 'POST' })).status);
+  expect(status).toBe(403);
+
+  // When a newer version exists, the Update button appears.
+  await page.evaluate(() => window.__atlasTest.setUpdate({ local: 1, remote: 99 }));
+  await expect(page.locator('[data-testid="update-btn"]')).toContainText('Update to v99');
+  await page.evaluate((v) => window.__atlasTest.setUpdate({ local: v, remote: v }), expected);
+  await expect(page.locator('[data-testid="update-btn"]')).toHaveCount(0);
+});
+
 test('a big export imports without freezing the app', async () => {
   test.setTimeout(180_000);
   const fresh = await context.browser().newContext({ viewport: { width: 1440, height: 900 } });

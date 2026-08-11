@@ -37,18 +37,27 @@ export function TopBar({
     resumeWatching,
     importFiles,
     convMeta,
+    updateInfo,
+    updating,
+    checkForUpdates,
+    runUpdate,
   } = useStore();
   const fileRef = useRef<HTMLInputElement>(null);
+  const updateReady = updateInfo && updateInfo.remote !== null && updateInfo.remote > updateInfo.local;
 
   const scopeValue = scope.kind === 'all' ? 'all' : scope.kind === 'project' ? `proj:${scope.uuid}` : `ws:${scope.id}`;
 
   return (
     <header className="topbar">
       <div className="topbar-left">
-        <span className="logo">
+        <button
+          className="logo"
+          title={`Chat Atlas v${updateInfo?.local ?? '…'} — click to check for updates`}
+          onClick={() => void checkForUpdates(true)}
+        >
           <AtlasLogo />
           <span className="logo-text">Chat Atlas</span>
-        </span>
+        </button>
         <nav className="tabs" aria-label="Views">
           {TABS.map((t) => (
             <button key={t.id} className={`tab ${tab === t.id ? 'tab-on' : ''}`} onClick={() => setTab(t.id)}>
@@ -59,6 +68,11 @@ export function TopBar({
       </div>
 
       <div className="topbar-right">
+        {updateReady && (
+          <button className="update-chip" data-testid="update-btn" disabled={updating} onClick={() => void runUpdate()}>
+            {updating ? 'Updating…' : `Update to v${updateInfo!.remote}`}
+          </button>
+        )}
         {convMeta.length > 0 && (
           <select
             className="scope-select"

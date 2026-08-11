@@ -136,6 +136,30 @@ input[type='search']::-webkit-search-cancel-button {
   font-weight: 650;
   font-size: 16px;
   letter-spacing: -0.01em;
+  cursor: pointer;
+}
+
+.update-chip {
+  background: var(--accent);
+  color: #fff;
+  font-size: 12.5px;
+  font-weight: 650;
+  padding: 6px 14px;
+  border-radius: 999px;
+  box-shadow: var(--shadow-sm);
+  animation: pulse 2.4s infinite;
+  white-space: nowrap;
+}
+
+.update-chip:hover {
+  background: var(--accent-strong);
+  animation: none;
+}
+
+.update-chip:disabled {
+  opacity: 0.7;
+  animation: none;
+  cursor: default;
 }
 
 .tabs {

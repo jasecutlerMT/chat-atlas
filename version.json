@@ -1,0 +1,5 @@
+{
+  "version": 4,
+  "label": "Update button, Documents archive, knowledge library",
+  "note": "Bump 'version' on every release and push the mirror (see scripts/publish-mirror.sh). The in-app Update button compares this number with the public mirror's copy."
+}

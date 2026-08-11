@@ -24,11 +24,12 @@ export function SetupPanel() {
           <>
             <button className="primary-btn" onClick={() => void chooseFolder()}>
               <FolderIcon size={17} />
-              Point me at your Downloads folder
+              Choose the folder your downloads land in
             </button>
             <p className="setup-why">
-              Why: when you export your data from claude.ai, the zip lands in Downloads — Chat Atlas will spot it there and update itself
-              automatically, no clicks needed.
+              Why: when you download your claude.ai export (or any file Claude makes), it lands in a folder — usually Downloads, but yours
+              might be somewhere else, like a folder on your Desktop. Point Chat Atlas at that folder once and everything new there is
+              noticed automatically, no clicks needed.
             </p>
           </>
         ) : (
