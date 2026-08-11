@@ -5,13 +5,12 @@ import { useRef } from 'react';
 import { useStore } from '../state/store';
 import { AtlasLogo, FolderIcon, MoonIcon, SunIcon } from './Icons';
 
-export type Tab = 'map' | 'timeline' | 'outputs' | 'chats';
+export type Tab = 'library' | 'map' | 'timeline';
 
 const TABS: { id: Tab; label: string }[] = [
+  { id: 'library', label: 'Library' },
   { id: 'map', label: 'Map' },
   { id: 'timeline', label: 'Timeline' },
-  { id: 'outputs', label: 'Outputs' },
-  { id: 'chats', label: 'All chats' },
 ];
 
 export function TopBar({

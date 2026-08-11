@@ -4,12 +4,16 @@
   "version": "0.0.0",
   "type": "module",
   "scripts": {
-    "dev": "vite",
+    "dev": "vite --port 5173 --strictPort",
     "build": "tsc -b && vite build",
     "lint": "oxlint",
-    "preview": "vite preview"
+    "preview": "vite preview",
+    "icons": "node icon/make-icons.mjs",
+    "test:e2e": "playwright test",
+    "test:launcher": "node --test tests/launcher.test.mjs"
   },
   "dependencies": {
+    "docx": "^9.7.1",
     "idb": "^8.0.3",
     "jszip": "^3.10.1",
     "minisearch": "^7.2.0",
@@ -17,9 +21,12 @@
     "react-dom": "^19.2.8",
     "react-force-graph-2d": "^1.29.1",
     "react-markdown": "^10.1.0",
-    "remark-gfm": "^4.0.1"
+    "remark-gfm": "^4.0.1",
+    "remark-parse": "^11.0.0",
+    "unified": "^11.0.5"
   },
   "devDependencies": {
+    "@playwright/test": "^1.62.1",
     "@types/node": "^24.13.3",
     "@types/react": "^19.2.17",
     "@types/react-dom": "^19.2.3",

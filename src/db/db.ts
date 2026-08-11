@@ -6,9 +6,13 @@
 
 import { openDB, type IDBPDatabase } from 'idb';
 import type {
+  Collection,
   Conversation,
   ConvMeta,
+  Entity,
+  EntityOverrides,
   GraphEdge,
+  LibraryItemRef,
   OutputCard,
   SkippedItem,
   Workspace,
@@ -61,10 +65,14 @@ export async function setMeta(key: string, value: unknown): Promise<void> {
 
 // ---- derived ----
 
+export const DERIVED_SCHEMA_VERSION = 2;
+
 export interface DerivedBundle {
+  schemaVersion?: number;
   convMeta: ConvMeta[];
   edges: GraphEdge[];
   outputs: OutputCard[];
+  entities?: Entity[];
 }
 
 export async function getDerived(): Promise<DerivedBundle | undefined> {
@@ -89,4 +97,32 @@ export async function getWorkspaces(): Promise<Workspace[]> {
 
 export async function setWorkspaces(ws: Workspace[]): Promise<void> {
   await setMeta('workspaces', ws);
+}
+
+// ---- knowledge organisation (all additive meta keys) ----
+
+export async function getPins(): Promise<LibraryItemRef[]> {
+  return (await getMeta<LibraryItemRef[]>('pins')) ?? [];
+}
+
+export async function setPins(pins: LibraryItemRef[]): Promise<void> {
+  await setMeta('pins', pins);
+}
+
+export async function getCollections(): Promise<Collection[]> {
+  return (await getMeta<Collection[]>('collections')) ?? [];
+}
+
+export async function setCollections(cols: Collection[]): Promise<void> {
+  await setMeta('collections', cols);
+}
+
+export const EMPTY_OVERRIDES: EntityOverrides = { hidden: [], renames: {}, merges: {}, kinds: {} };
+
+export async function getEntityOverrides(): Promise<EntityOverrides> {
+  return (await getMeta<EntityOverrides>('entityOverrides')) ?? { ...EMPTY_OVERRIDES };
+}
+
+export async function setEntityOverrides(o: EntityOverrides): Promise<void> {
+  await setMeta('entityOverrides', o);
 }

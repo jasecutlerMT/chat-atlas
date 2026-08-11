@@ -17,9 +17,13 @@ import {
   setSkipped,
   setDerived,
   setMeta,
+  getMeta,
+  DERIVED_SCHEMA_VERSION,
 } from '../db/db';
 import { computeTfidf } from '../lib/tfidf';
 import { extractOutputs } from '../lib/classify';
+import { detectEntities, decorateTitles } from '../lib/entities';
+import { groupVersions, buildTextLookup } from '../lib/versions';
 import { countWords, firstLine } from '../lib/text';
 import type {
   Conversation,
@@ -116,7 +120,7 @@ function indexConversation(conv: Conversation): void {
 
 // ---- derived data ----
 
-function buildDerived(convs: Conversation[]): void {
+async function buildDerived(convs: Conversation[]): Promise<void> {
   post({ t: 'progress', label: 'Mapping connections between conversations…', pct: 0.8 });
   const tfidf = computeTfidf(convs);
   const convMeta: ConvMeta[] = convs.map((c) => ({
@@ -133,12 +137,20 @@ function buildDerived(convs: Conversation[]): void {
     cluster: tfidf.clusters.get(c.uuid) ?? 0,
     firstLine: firstLine(c.messages[0]?.text ?? ''),
   }));
-  post({ t: 'progress', label: 'Collecting your outputs…', pct: 0.9 });
+  post({ t: 'progress', label: 'Collecting your outputs…', pct: 0.86 });
   const outputs: OutputCard[] = [];
   for (const c of convs) outputs.push(...extractOutputs(c));
+
+  post({ t: 'progress', label: 'Spotting companies, people and tools…', pct: 0.92 });
+  const entities = detectEntities(convs, outputs);
+  decorateTitles(outputs, entities);
+
+  post({ t: 'progress', label: 'Grouping drafts of the same thing…', pct: 0.96 });
+  groupVersions(outputs, buildTextLookup(convs));
+
   outputs.sort((a, b) => (a.date < b.date ? 1 : -1));
   convMeta.sort((a, b) => (a.updated_at < b.updated_at ? 1 : -1));
-  void setDerived({ convMeta, edges: tfidf.edges, outputs });
+  await setDerived({ schemaVersion: DERIVED_SCHEMA_VERSION, convMeta, edges: tfidf.edges, outputs, entities });
 }
 
 // ---- import ----
@@ -191,12 +203,18 @@ async function handleImport(buf: ArrayBuffer, fileName: string): Promise<void> {
   for (const c of toWrite) indexConversation(c);
 
   const all = await getAllConversations();
-  if (toWrite.length > 0) buildDerived(all);
+  if (toWrite.length > 0) await buildDerived(all);
 
   // Keep the skipped-items panel current: latest import's issues replace older ones.
   const prevSkipped = await getSkipped();
   const merged: SkippedItem[] = toWrite.length > 0 || skipped.length > 0 ? skipped : prevSkipped;
   await setSkipped(merged);
+  // Remember when the previous import happened, so "What's new" can show what
+  // this one changed. Only roll it forward when something actually changed.
+  if (toWrite.length > 0) {
+    const prev = await getMeta<string>('lastImportAt');
+    if (prev) await setMeta('prevImportAt', prev);
+  }
   await setMeta('lastImportAt', new Date().toISOString());
   await setMeta('lastImportFile', fileName);
 
@@ -309,6 +327,12 @@ self.onmessage = (ev: MessageEvent<ToWorker>) => {
       if (msg.t === 'init') await init();
       else if (msg.t === 'import') await handleImport(msg.buf, msg.fileName);
       else if (msg.t === 'search') runSearch(msg.id, msg.q, msg.filters);
+      else if (msg.t === 'rebuild') {
+        // The stored derived data predates the current schema — recompute it
+        // from the conversations already on disk, no re-import needed.
+        await buildDerived(await getAllConversations());
+        post({ t: 'rebuilt' });
+      }
     } catch (err) {
       post({ t: 'error', message: err instanceof Error ? err.message : String(err) });
     }

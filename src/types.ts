@@ -61,6 +61,46 @@ export interface OutputCard {
   date: string;
   convName: string;
   wordCount: number;
+  /** Ids of the companies/people/tools this output is about (top 3 by entity score). */
+  entityIds: string[];
+  /** Version group: near-duplicate drafts share a groupId; equals own id when ungrouped. */
+  groupId: string;
+}
+
+// ---- knowledge organisation ----
+
+export type EntityKind = 'company' | 'person' | 'tool';
+
+/** A real-world thing detected across conversations: a company, person or tool. */
+export interface Entity {
+  id: string; // 'ent-' + normalised key
+  label: string; // most frequent surface form
+  kind?: EntityKind;
+  convIds: string[];
+  outputIds: string[];
+  count: number;
+  inTitles: number;
+  score: number;
+}
+
+/** User corrections to detected entities; keyed by entity id so they survive rebuilds. */
+export interface EntityOverrides {
+  hidden: string[];
+  renames: Record<string, string>;
+  merges: Record<string, string>; // id -> canonical id
+  kinds: Record<string, EntityKind>;
+}
+
+export interface LibraryItemRef {
+  kind: 'output' | 'conversation';
+  id: string;
+}
+
+export interface Collection {
+  id: string;
+  name: string;
+  items: LibraryItemRef[];
+  createdAt: string;
 }
 
 export interface GraphEdge {
@@ -130,11 +170,13 @@ export interface SearchResponse {
 export type ToWorker =
   | { t: 'init' }
   | { t: 'import'; buf: ArrayBuffer; fileName: string }
-  | { t: 'search'; id: number; q: string; filters: SearchFilters };
+  | { t: 'search'; id: number; q: string; filters: SearchFilters }
+  | { t: 'rebuild' };
 
 export type FromWorker =
   | { t: 'ready'; convCount: number }
   | { t: 'progress'; label: string; pct: number }
   | { t: 'imported'; summary: ImportSummary }
   | { t: 'results'; id: number; hits: SearchHit[]; matchedConvIds: string[]; totalHits: number }
+  | { t: 'rebuilt' }
   | { t: 'error'; message: string };

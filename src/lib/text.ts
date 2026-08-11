@@ -8,6 +8,24 @@ const STOPWORDS = new Set(
   ).split(/\s+/),
 );
 
+/**
+ * Words that make terrible keywords, chips and cluster labels because they are
+ * about the medium (chatting with Claude) rather than the matter. Applied when
+ * scoring keywords — NOT in the search tokenizer, so full-text search still
+ * finds them.
+ */
+export const KEYWORD_STOPLIST = new Set(
+  (
+    'untitled conversation conversations chat chats chatting artifact artifacts message messages messaging ' +
+    'claude anthropic assistant human user users response responses request requests reply replies answer answers ' +
+    'question questions version versions draft drafts drafted update updates updated updating final copy copies ' +
+    'doc docs document documents file files folder folders section sections title titles item items list lists ' +
+    'note notes example examples content contents text texts summary summaries output outputs input inputs ' +
+    'paste pasted screenshot screenshots image images attached attachment attachments upload uploaded ' +
+    'edit edited editing rewrite rewritten revised revision hello hey thanks discussion discussed talk talked'
+  ).split(/\s+/),
+);
+
 export function tokenize(text: string): string[] {
   const lower = text.toLowerCase();
   const raw = lower.match(/[a-z][a-z0-9'’-]{2,}/g) ?? [];

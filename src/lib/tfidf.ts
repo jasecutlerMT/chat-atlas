@@ -2,7 +2,7 @@
 // measures overlap between conversations (cosine similarity) to build map edges,
 // and groups connected conversations into clusters via label propagation.
 
-import { tokenize } from './text';
+import { KEYWORD_STOPLIST, tokenize } from './text';
 import type { Conversation, GraphEdge } from '../types';
 
 const TERMS_PER_CONV = 60;
@@ -57,6 +57,7 @@ export function computeTfidf(convs: Conversation[]): TfidfResult {
     for (const [t, c] of counts) {
       const d = df.get(t)!;
       if (d / N > 0.6) continue; // corpus-wide filler word
+      if (KEYWORD_STOPLIST.has(t)) continue; // about the medium, not the matter
       const w = (1 + Math.log(c)) * Math.log(1 + N / d);
       scored.push([t, w]);
     }

@@ -85,17 +85,37 @@ export function extractOutputs(conv: Conversation): OutputCard[] {
       date: m.created_at || conv.updated_at,
       convName: conv.name,
       wordCount: countWords(m.text),
+      entityIds: [], // filled in by the entity pass in the worker
+      groupId: `${conv.uuid}/${m.uuid}`, // replaced by the version-grouping pass
     });
   }
   return cards;
 }
 
+/** Conversational lead-ins that make useless titles ("Here's the email you asked for…"). */
+const LEAD_IN =
+  /^(here('|’)s|here is|here are|sure[,!.]?|sure thing[,!.]?|certainly[,!.]?|absolutely[,!.]?|of course[,!.]?|okay[,!.]?|ok[,!.]?|got it[,!.]?|great[,!.]?|below is|below are|this is|i('|’)ve (drafted|prepared|put together|written|created|made)|i (drafted|prepared|put together|wrote|created|made))\b[:,]?\s*/i;
+
 function titleFor(m: ChatMessage, conv: Conversation): string {
-  const heading = m.text.match(/^#{1,4}\s+(.+)$/m);
-  if (heading) return heading[1].replace(/[*_`]/g, '').trim();
+  // A heading near the top is the author's own title — best signal.
+  const topLines = m.text.split('\n').slice(0, 12).join('\n');
+  const heading = topLines.match(/^#{1,4}\s+(.+)$/m);
+  if (heading) return heading[1].replace(/[*_`]/g, '').trim().slice(0, 90);
   const subject = m.text.match(/^subject\s*:\s*(.+)$/im);
-  if (subject) return subject[1].trim();
-  return firstLine(m.text) || conv.name;
+  if (subject) return subject[1].trim().slice(0, 90);
+  let line = firstLine(m.text);
+  // Strip stacked lead-ins ("Sure! Here's the draft:") until the line stabilises.
+  for (let i = 0; i < 4; i++) {
+    const next = line.replace(LEAD_IN, '').trim();
+    if (next === line) break;
+    line = next;
+  }
+  line = line.replace(/^["'“”]+|[:;,\s]+$/g, '').trim();
+  // A word or two of leftover fluff is not a title; fall back to the chat's name.
+  if (line.split(/\s+/).filter(Boolean).length < 3) return conv.name;
+  const sentenceEnd = line.search(/[.!?]\s/);
+  if (sentenceEnd > 20) line = line.slice(0, sentenceEnd + 1);
+  return (line.length > 80 ? line.slice(0, 77) + '…' : line) || conv.name;
 }
 
 function previewFor(text: string): string {

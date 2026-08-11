@@ -44,7 +44,7 @@ interface MapLink {
 }
 
 export function MapView() {
-  const { scopedConvs, edges, matchedConvIds, query, openConversation, theme } = useStore();
+  const { scopedConvs, edges, matchedConvIds, query, openConversation, theme, visibleEntities } = useStore();
   const fgRef = useRef<ForceGraphMethods<MapNode, MapLink> | undefined>(undefined);
   const wrapRef = useRef<HTMLDivElement>(null);
   const [size, setSize] = useState({ w: window.innerWidth, h: window.innerHeight });
@@ -149,22 +149,40 @@ export function MapView() {
     setPaused(!paused);
   }, [paused]);
 
-  // Legend: name each topic cluster after its members' most common keyword.
+  // Legend: name each topic group after the real thing (company/person/tool)
+  // most of its members mention; fall back to distinctive keywords.
   const legend = useMemo(() => {
     if (colourBy === 'month') return null;
     const byCluster = new Map<number, Map<string, number>>();
     const counts = new Map<number, number>();
+    const members = new Map<number, Set<string>>();
     for (const c of scopedConvs) {
       counts.set(c.cluster, (counts.get(c.cluster) ?? 0) + 1);
       let kw = byCluster.get(c.cluster);
       if (!kw) byCluster.set(c.cluster, (kw = new Map()));
       c.keywords.forEach((k, i) => kw!.set(k, (kw!.get(k) ?? 0) + (5 - i)));
+      let mem = members.get(c.cluster);
+      if (!mem) members.set(c.cluster, (mem = new Set()));
+      mem.add(c.uuid);
     }
     return [...counts.entries()]
       .filter(([, n]) => n >= 2)
       .sort((a, b) => b[1] - a[1])
       .slice(0, 7)
       .map(([cluster, n]) => {
+        const mem = members.get(cluster)!;
+        let bestEntity = '';
+        let bestOverlap = 0;
+        for (const e of visibleEntities) {
+          const overlap = e.convIds.reduce((s, id) => s + (mem.has(id) ? 1 : 0), 0);
+          if (overlap > bestOverlap) {
+            bestOverlap = overlap;
+            bestEntity = e.label;
+          }
+        }
+        if (bestEntity && bestOverlap >= 2 && bestOverlap / n >= 0.3) {
+          return { cluster, label: bestEntity, count: n };
+        }
         const kws = byCluster.get(cluster)!;
         const top = [...kws.entries()]
           .sort((a, b) => b[1] - a[1])
@@ -172,7 +190,7 @@ export function MapView() {
           .map(([k]) => k);
         return { cluster, label: top.join(' · ') || 'misc', count: n };
       });
-  }, [scopedConvs, colourBy]);
+  }, [scopedConvs, colourBy, visibleEntities]);
 
   return (
     <div

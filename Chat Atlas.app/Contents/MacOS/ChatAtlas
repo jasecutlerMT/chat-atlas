@@ -1,0 +1,181 @@
+#!/bin/sh
+# Chat Atlas launcher: one double-click starts the app and opens the browser.
+#
+# Unlike a static page, Chat Atlas needs its little local server running
+# (`npm run dev`), so this script has three jobs: find the chat-atlas folder,
+# make sure the server is up, then open Chrome at http://localhost:5173.
+#
+# Finding the folder is done in stages and remembered, because macOS runs
+# downloaded apps from a randomised read-only copy (App Translocation), where
+# the bundle sits completely alone — never assume our siblings are present.
+
+SUPPORT="$HOME/Library/Application Support/ChatAtlas"
+MEMO="$SUPPORT/location"
+URL="http://localhost:5173"
+SELF_DIR="$(cd "$(dirname "$0")/../../.." && pwd)"
+
+# A real chat-atlas folder has all three of these.
+is_atlas() {
+  [ -f "$1/package.json" ] && [ -f "$1/vite.config.ts" ] && [ -d "$1/src" ]
+}
+
+alert() {
+  osascript -e "display alert \"Chat Atlas\" message \"$1\"" >/dev/null 2>&1
+}
+
+notify() {
+  osascript -e "display notification \"$1\" with title \"Chat Atlas\"" >/dev/null 2>&1
+}
+
+DIR=""
+
+# 1. Wherever we found it last time. $HOME stays writable even when the app
+#    itself runs from the read-only translocation mount.
+if [ -f "$MEMO" ]; then
+  REMEMBERED="$(cat "$MEMO" 2>/dev/null)"
+  if [ -n "$REMEMBERED" ] && is_atlas "$REMEMBERED"; then
+    DIR="$REMEMBERED"
+  fi
+fi
+
+# 2. Next to us — the normal case when the app still sits inside chat-atlas/.
+if [ -z "$DIR" ] && is_atlas "$SELF_DIR"; then
+  DIR="$SELF_DIR"
+fi
+
+# 3. Ask Spotlight. Only accept a single unambiguous hit: silently opening
+#    the wrong copy is exactly the confusion this launcher must prevent.
+if [ -z "$DIR" ] && command -v mdfind >/dev/null 2>&1; then
+  CANDIDATES="$(mdfind -name 'vite.config.ts' 2>/dev/null | while IFS= read -r HIT; do
+    CAND="$(dirname "$HIT")"
+    case "$CAND" in
+      */chat-atlas) ;;
+      *) continue ;;
+    esac
+    is_atlas "$CAND" && printf '%s\n' "$CAND"
+  done | sort -u)"
+  if [ -n "$CANDIDATES" ]; then
+    COUNT="$(printf '%s\n' "$CANDIDATES" | wc -l | tr -d ' ')"
+    if [ "$COUNT" -eq 1 ]; then
+      DIR="$CANDIDATES"
+    fi
+  fi
+fi
+
+# 4. Out of guesses — have the user point at the folder once.
+if [ -z "$DIR" ]; then
+  PICKED="$(osascript -e 'try' \
+    -e 'set f to choose folder with prompt "Please find your chat-atlas folder (it contains package.json)."' \
+    -e 'POSIX path of f' \
+    -e 'end try' 2>/dev/null)"
+  PICKED="${PICKED%/}"
+  if [ -n "$PICKED" ] && is_atlas "$PICKED"; then
+    DIR="$PICKED"
+  fi
+fi
+
+if [ -z "$DIR" ]; then
+  alert "I could not find the chat-atlas folder.
+
+You can always start it by hand instead: open Terminal, type cd, drag the chat-atlas folder onto the window, press Enter, then type: npm run dev
+
+(Looked next to the app at: $SELF_DIR)"
+  exit 1
+fi
+
+# Remember it, so the search above happens at most once.
+mkdir -p "$SUPPORT" 2>/dev/null && printf '%s\n' "$DIR" > "$MEMO" 2>/dev/null
+
+# Lets the tests check which folder was resolved without launching anything.
+if [ "$1" = "--resolve-only" ]; then
+  printf '%s\n' "$DIR"
+  exit 0
+fi
+
+port_up() {
+  curl -s -o /dev/null --max-time 2 "$URL/" 2>/dev/null
+}
+
+if ! port_up; then
+  # Find node: apps launched from Finder get a bare PATH without Homebrew or
+  # nvm, so probe the usual homes before falling back to a login shell.
+  NODE_DIR=""
+  for CAND in /opt/homebrew/bin /usr/local/bin /usr/bin; do
+    if [ -x "$CAND/node" ] && [ -e "$CAND/npm" ]; then
+      NODE_DIR="$CAND"
+      break
+    fi
+  done
+  if [ -z "$NODE_DIR" ]; then
+    NVM_NODE="$(ls -d "$HOME"/.nvm/versions/node/*/bin 2>/dev/null | sort -V | tail -1)"
+    if [ -n "$NVM_NODE" ] && [ -x "$NVM_NODE/node" ]; then
+      NODE_DIR="$NVM_NODE"
+    fi
+  fi
+  if [ -z "$NODE_DIR" ]; then
+    FROM_SHELL="$(zsh -lic 'command -v node' 2>/dev/null | tail -1)"
+    if [ -n "$FROM_SHELL" ] && [ -x "$FROM_SHELL" ]; then
+      NODE_DIR="$(dirname "$FROM_SHELL")"
+    fi
+  fi
+  if [ -z "$NODE_DIR" ]; then
+    alert "Chat Atlas needs Node.js, which I could not find on this Mac.
+
+Install it once from nodejs.org (the green LTS button, then click through the installer) and double-click me again."
+    exit 1
+  fi
+  PATH="$NODE_DIR:$PATH"
+  export PATH
+
+  mkdir -p "$SUPPORT" 2>/dev/null
+
+  # First run: fetch the app's building blocks. Takes a minute or two.
+  if [ ! -d "$DIR/node_modules" ]; then
+    notify "First launch: setting things up. This takes a minute or two."
+    (cd "$DIR" && "$NODE_DIR/npm" install >> "$SUPPORT/install.log" 2>&1)
+    if [ ! -d "$DIR/node_modules" ]; then
+      alert "Setting up did not finish. Check your internet connection and try again.
+
+Details were saved to: $SUPPORT/install.log"
+      exit 1
+    fi
+  fi
+
+  (cd "$DIR" && nohup "$NODE_DIR/npm" run dev >> "$SUPPORT/dev.log" 2>&1 &)
+
+  # Wait for the server to answer before opening the browser.
+  TRIES=0
+  while [ "$TRIES" -lt 60 ]; do
+    if port_up; then
+      break
+    fi
+    sleep 1
+    TRIES=$((TRIES + 1))
+  done
+  if ! port_up; then
+    alert "The app did not start in time. Try double-clicking again — and if it keeps happening, the log at $SUPPORT/dev.log will say why."
+    exit 1
+  fi
+fi
+
+# Prefer a clean Chrome-family app window (auto-updating needs Chrome anyway).
+# Run the browser binary directly: `open -a X --args` is ignored when the
+# browser is already running, and `open -n` would fork a second profile whose
+# empty storage would look like the data had vanished.
+for BROWSER in \
+  "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome" \
+  "$HOME/Applications/Google Chrome.app/Contents/MacOS/Google Chrome" \
+  "/Applications/Microsoft Edge.app/Contents/MacOS/Microsoft Edge" \
+  "$HOME/Applications/Microsoft Edge.app/Contents/MacOS/Microsoft Edge" \
+  "/Applications/Brave Browser.app/Contents/MacOS/Brave Browser" \
+  "$HOME/Applications/Brave Browser.app/Contents/MacOS/Brave Browser" \
+  "/Applications/Chromium.app/Contents/MacOS/Chromium" \
+  "$HOME/Applications/Chromium.app/Contents/MacOS/Chromium"
+do
+  if [ -x "$BROWSER" ]; then
+    nohup "$BROWSER" --app="$URL" --window-size=1360,920 >/dev/null 2>&1 &
+    exit 0
+  fi
+done
+
+exec open "$URL"

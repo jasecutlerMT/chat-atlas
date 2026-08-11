@@ -41,7 +41,7 @@ export function SearchBar() {
     if (keywordChip && !counts.has(keywordChip)) counts.set(keywordChip, 1);
     return [...counts.entries()]
       .sort((a, b) => b[1] - a[1])
-      .slice(0, 10)
+      .slice(0, 8)
       .map(([k]) => k);
   }, [scopedConvs, keywordChip]);
 

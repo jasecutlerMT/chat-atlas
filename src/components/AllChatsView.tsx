@@ -6,7 +6,7 @@ import { formatDate } from '../lib/text';
 
 type SortKey = 'recent' | 'oldest' | 'messages' | 'name';
 
-export function AllChatsView() {
+export function AllChatsView({ embedded = false }: { embedded?: boolean }) {
   const { scopedConvs, openConversation } = useStore();
   const [sort, setSort] = useState<SortKey>('recent');
   const [filter, setFilter] = useState('');
@@ -35,8 +35,8 @@ export function AllChatsView() {
   }, [scopedConvs, sort, filter]);
 
   return (
-    <div className="view-scroll">
-      <div className="view-inner">
+    <div className={embedded ? 'allchats-embedded' : 'view-scroll'}>
+      <div className={embedded ? '' : 'view-inner'}>
         <header className="view-head">
           <h1>All chats</h1>
           <p className="view-sub">

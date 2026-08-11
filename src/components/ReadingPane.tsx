@@ -6,8 +6,9 @@ import type { Conversation } from '../types';
 import { getConversation } from '../db/db';
 import { useStore } from '../state/store';
 import { formatDate, formatDateTime } from '../lib/text';
+import { downloadText } from '../lib/download';
 import { CopyButton, Markdown } from './Markdown';
-import { CloseIcon, DownloadIcon, PaperclipIcon } from './Icons';
+import { CloseIcon, DownloadIcon, PaperclipIcon, PinIcon } from './Icons';
 
 function conversationToMarkdown(conv: Conversation): string {
   const lines = [`# ${conv.name}`, ''];
@@ -23,18 +24,8 @@ function conversationToMarkdown(conv: Conversation): string {
   return lines.join('\n');
 }
 
-function downloadMarkdown(name: string, text: string): void {
-  const blob = new Blob([text], { type: 'text/markdown' });
-  const url = URL.createObjectURL(blob);
-  const a = document.createElement('a');
-  a.href = url;
-  a.download = name.replace(/[^\w\s-]/g, '').trim().replace(/\s+/g, '-').toLowerCase() + '.md';
-  a.click();
-  URL.revokeObjectURL(url);
-}
-
 export function ReadingPane() {
-  const { reading, closeReading } = useStore();
+  const { reading, closeReading, togglePin, isPinned } = useStore();
   const [conv, setConv] = useState<Conversation | null>(null);
   const bodyRef = useRef<HTMLDivElement>(null);
   const targetMsg = reading?.msgId;
@@ -98,9 +89,16 @@ export function ReadingPane() {
               </div>
               <div className="pane-actions">
                 <button
+                  className={`icon-btn ${isPinned({ kind: 'conversation', id: conv.uuid }) ? 'icon-btn-on' : ''}`}
+                  title={isPinned({ kind: 'conversation', id: conv.uuid }) ? 'Unpin this conversation' : 'Pin this conversation'}
+                  onClick={() => togglePin({ kind: 'conversation', id: conv.uuid })}
+                >
+                  <PinIcon size={15} />
+                </button>
+                <button
                   className="ghost-btn"
                   title="Save this conversation as a markdown file"
-                  onClick={() => downloadMarkdown(conv.name, conversationToMarkdown(conv))}
+                  onClick={() => downloadText(conv.name, conversationToMarkdown(conv))}
                 >
                   <DownloadIcon size={15} />
                   <span>Save as file</span>

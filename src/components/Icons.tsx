@@ -96,6 +96,13 @@ export const PaperclipIcon = ({ size }: IconProps) => (
   </svg>
 );
 
+export const PinIcon = ({ size }: IconProps) => (
+  <svg {...base(size)}>
+    <path d="M12 17v5" />
+    <path d="M9 3h6l-1 7 3 3H7l3-3z" />
+  </svg>
+);
+
 export const AtlasLogo = ({ size = 22 }: IconProps) => (
   <svg width={size} height={size} viewBox="0 0 24 24" fill="none" aria-hidden>
     <circle cx="7" cy="7" r="3" fill="var(--accent)" />

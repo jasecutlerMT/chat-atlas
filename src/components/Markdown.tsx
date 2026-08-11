@@ -35,13 +35,14 @@ function extractText(node: ReactNode): string {
   return '';
 }
 
-export function Markdown({ text }: { text: string }) {
+export function Markdown({ text, plain = false }: { text: string; plain?: boolean }) {
   return (
     <div className="md">
       <ReactMarkdown
         remarkPlugins={[remarkGfm]}
         components={{
           pre({ children }) {
+            if (plain) return <pre>{children}</pre>;
             const code = extractText(children).replace(/\n$/, '');
             return (
               <div className="code-block">

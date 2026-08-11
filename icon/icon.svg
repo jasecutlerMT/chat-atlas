@@ -1,0 +1,54 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewBox="0 0 1024 1024">
+  <!-- Chat Atlas — macOS app icon (master artwork).
+       Big Sur-style squircle, deep night background, a constellation of
+       conversation dots with the accent star. Regenerate the .icns with
+       chat-atlas/icon/make-icons.mjs (npm run icons). -->
+  <defs>
+    <linearGradient id="bg" x1="0.5" y1="0" x2="0.5" y2="1">
+      <stop offset="0%" stop-color="#23242e"/>
+      <stop offset="55%" stop-color="#14151c"/>
+      <stop offset="100%" stop-color="#0b0c11"/>
+    </linearGradient>
+    <radialGradient id="glow" cx="0.34" cy="0.3" r="0.9">
+      <stop offset="0%" stop-color="#d97757" stop-opacity="0.22"/>
+      <stop offset="45%" stop-color="#d97757" stop-opacity="0.05"/>
+      <stop offset="100%" stop-color="#d97757" stop-opacity="0"/>
+    </radialGradient>
+    <radialGradient id="star" cx="0.4" cy="0.35" r="1">
+      <stop offset="0%" stop-color="#f2a184"/>
+      <stop offset="100%" stop-color="#c85f3c"/>
+    </radialGradient>
+    <filter id="softShadow" x="-50%" y="-50%" width="200%" height="200%">
+      <feDropShadow dx="0" dy="10" stdDeviation="18" flood-color="#000000" flood-opacity="0.5"/>
+    </filter>
+    <clipPath id="squircle">
+      <rect x="96" y="96" width="832" height="832" rx="186"/>
+    </clipPath>
+  </defs>
+
+  <g clip-path="url(#squircle)">
+    <rect x="96" y="96" width="832" height="832" fill="url(#bg)"/>
+    <rect x="96" y="96" width="832" height="832" fill="url(#glow)"/>
+
+    <!-- constellation lines -->
+    <g stroke="#8b93a7" stroke-opacity="0.55" stroke-width="14" stroke-linecap="round">
+      <line x1="392" y1="420" x2="620" y2="330"/>
+      <line x1="392" y1="420" x2="470" y2="650"/>
+      <line x1="470" y1="650" x2="700" y2="560"/>
+      <line x1="620" y1="330" x2="700" y2="560"/>
+      <line x1="700" y1="560" x2="782" y2="716"/>
+      <line x1="392" y1="420" x2="268" y2="292"/>
+    </g>
+
+    <!-- conversation dots -->
+    <circle cx="620" cy="330" r="52" fill="#aeb6c8" filter="url(#softShadow)"/>
+    <circle cx="470" cy="650" r="64" fill="#7e879c" filter="url(#softShadow)"/>
+    <circle cx="700" cy="560" r="44" fill="#98a1b5" filter="url(#softShadow)"/>
+    <circle cx="268" cy="292" r="38" fill="#67707f" filter="url(#softShadow)"/>
+    <circle cx="782" cy="716" r="30" fill="#5c6472" filter="url(#softShadow)"/>
+
+    <!-- the accent star: your library's centre -->
+    <circle cx="392" cy="420" r="92" fill="url(#star)" filter="url(#softShadow)"/>
+    <circle cx="392" cy="420" r="92" fill="none" stroke="#ffd9c7" stroke-opacity="0.5" stroke-width="8"/>
+  </g>
+</svg>

@@ -14,17 +14,38 @@ import {
   type ReactNode,
 } from 'react';
 import type {
+  Collection,
   ConvMeta,
+  Entity,
+  EntityKind,
+  EntityOverrides,
   FromWorker,
   GraphEdge,
   ImportSummary,
+  LibraryItemRef,
   OutputCard,
+  OutputType,
   SearchFilters,
   SearchHit,
   SkippedItem,
   Workspace,
 } from '../types';
-import { getDerived, getMeta, getSkipped, getWorkspaces, setMeta, setWorkspaces as dbSetWorkspaces } from '../db/db';
+import {
+  getDerived,
+  getMeta,
+  getSkipped,
+  getWorkspaces,
+  setMeta,
+  setWorkspaces as dbSetWorkspaces,
+  getPins,
+  setPins as dbSetPins,
+  getCollections,
+  setCollections as dbSetCollections,
+  getEntityOverrides,
+  setEntityOverrides as dbSetEntityOverrides,
+  EMPTY_OVERRIDES,
+  DERIVED_SCHEMA_VERSION,
+} from '../db/db';
 import { FolderWatcher, browserSupportsWatching, type WatcherStatus } from '../adapters/folderWatch';
 
 export type Scope = { kind: 'all' } | { kind: 'project'; uuid: string; name: string } | { kind: 'workspace'; id: string; name: string };
@@ -40,6 +61,16 @@ export interface ReadingTarget {
   msgId?: string;
 }
 
+/** Which knowledge source the Library is showing. Lives in the store so search results and row actions can navigate. */
+export type LibrarySelection =
+  | { kind: 'home' }
+  | { kind: 'pinned' }
+  | { kind: 'recent' }
+  | { kind: 'type'; type: OutputType }
+  | { kind: 'entity'; id: string }
+  | { kind: 'collection'; id: string }
+  | { kind: 'conversations' };
+
 interface StoreValue {
   loading: boolean;
   convMeta: ConvMeta[];
@@ -53,6 +84,28 @@ interface StoreValue {
   setScope: (s: Scope) => void;
   saveWorkspace: (name: string, convIds: string[], id?: string) => Promise<string>;
   deleteWorkspace: (id: string) => Promise<void>;
+
+  // Knowledge organisation
+  visibleEntities: Entity[];
+  renameEntity: (id: string, label: string) => void;
+  hideEntity: (id: string) => void;
+  mergeEntities: (fromId: string, intoId: string) => void;
+  setEntityKind: (id: string, kind: EntityKind | undefined) => void;
+  pins: LibraryItemRef[];
+  togglePin: (ref: LibraryItemRef) => void;
+  isPinned: (ref: LibraryItemRef) => boolean;
+  collections: Collection[];
+  createCollection: (name: string, items?: LibraryItemRef[]) => string;
+  renameCollection: (id: string, name: string) => void;
+  deleteCollection: (id: string) => void;
+  addToCollection: (colId: string, ref: LibraryItemRef) => void;
+  removeFromCollection: (colId: string, ref: LibraryItemRef) => void;
+  moveInCollection: (colId: string, index: number, dir: -1 | 1) => void;
+  librarySel: LibrarySelection;
+  setLibrarySel: (s: LibrarySelection) => void;
+  groupedOutputs: OutputCard[];
+  versionsOf: (groupId: string) => OutputCard[];
+  prevImportAt: string | null;
 
   theme: 'dark' | 'light';
   toggleTheme: () => void;
@@ -101,6 +154,12 @@ export function StoreProvider({ children }: { children: ReactNode }) {
   const [convMeta, setConvMeta] = useState<ConvMeta[]>([]);
   const [edges, setEdges] = useState<GraphEdge[]>([]);
   const [outputs, setOutputs] = useState<OutputCard[]>([]);
+  const [entities, setEntities] = useState<Entity[]>([]);
+  const [entityOverrides, setEntityOverridesState] = useState<EntityOverrides>({ ...EMPTY_OVERRIDES });
+  const [pins, setPinsState] = useState<LibraryItemRef[]>([]);
+  const [collections, setCollectionsState] = useState<Collection[]>([]);
+  const [librarySel, setLibrarySel] = useState<LibrarySelection>({ kind: 'home' });
+  const [prevImportAt, setPrevImportAt] = useState<string | null>(null);
   const [skipped, setSkipped] = useState<SkippedItem[]>([]);
   const [workspaces, setWorkspacesState] = useState<Workspace[]>([]);
   const [scope, setScopeState] = useState<Scope>({ kind: 'all' });
@@ -140,15 +199,35 @@ export function StoreProvider({ children }: { children: ReactNode }) {
 
   // ---- load persisted state ----
   const reloadDerived = useCallback(async () => {
-    const [bundle, sk, ws, lia] = await Promise.all([getDerived(), getSkipped(), getWorkspaces(), getMeta<string>('lastImportAt')]);
+    const [bundle, sk, ws, lia, pia, pn, cols, ov] = await Promise.all([
+      getDerived(),
+      getSkipped(),
+      getWorkspaces(),
+      getMeta<string>('lastImportAt'),
+      getMeta<string>('prevImportAt'),
+      getPins(),
+      getCollections(),
+      getEntityOverrides(),
+    ]);
     if (bundle) {
       setConvMeta(bundle.convMeta);
       setEdges(bundle.edges);
       setOutputs(bundle.outputs);
+      setEntities(bundle.entities ?? []);
+      // Data imported by an older version of the app: derive the new
+      // organisation (entities, versions, better titles) from what's already
+      // stored — no re-import needed.
+      if (bundle.schemaVersion !== DERIVED_SCHEMA_VERSION) {
+        workerRef.current?.postMessage({ t: 'rebuild' });
+      }
     }
     setSkipped(sk);
     setWorkspacesState(ws);
     setLastImportAt(lia ?? null);
+    setPrevImportAt(pia ?? null);
+    setPinsState(pn);
+    setCollectionsState(cols);
+    setEntityOverridesState(ov);
 
     // First run with data: default the scope to a project or workspace named
     // "Career" if one exists, as requested.
@@ -205,6 +284,8 @@ export function StoreProvider({ children }: { children: ReactNode }) {
           setTotalHits(m.totalHits);
           setMatchedConvIds(new Set(m.matchedConvIds));
         }
+      } else if (m.t === 'rebuilt') {
+        void reloadDerived();
       } else if (m.t === 'error') {
         setProgress(null);
         pushToast(`Something went wrong: ${m.message}`, 'error');
@@ -333,6 +414,180 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     [],
   );
 
+  // ---- knowledge organisation ----
+
+  const visibleEntities = useMemo(() => {
+    const { hidden, renames, merges, kinds } = entityOverrides;
+    const hiddenSet = new Set(hidden);
+    // Fold merged entities into their canonical target.
+    const byId = new Map<string, Entity>();
+    for (const e of entities) {
+      const target = merges[e.id] ?? e.id;
+      const existing = byId.get(target);
+      if (existing) {
+        existing.convIds = [...new Set([...existing.convIds, ...e.convIds])];
+        existing.outputIds = [...new Set([...existing.outputIds, ...e.outputIds])];
+        existing.count += e.count;
+        existing.inTitles += e.inTitles;
+        existing.score += e.score;
+      } else if (target === e.id) {
+        byId.set(target, { ...e, convIds: [...e.convIds], outputIds: [...e.outputIds] });
+      } else {
+        // Merge target not detected this rebuild: keep the merged-into id alive.
+        byId.set(target, { ...e, id: target, convIds: [...e.convIds], outputIds: [...e.outputIds] });
+      }
+    }
+    const out: Entity[] = [];
+    for (const e of byId.values()) {
+      if (hiddenSet.has(e.id)) continue;
+      if (renames[e.id]) e.label = renames[e.id];
+      if (kinds[e.id]) e.kind = kinds[e.id];
+      out.push(e);
+    }
+    return out.sort((a, b) => b.score - a.score);
+  }, [entities, entityOverrides]);
+
+  const saveOverrides = useCallback((next: EntityOverrides) => {
+    setEntityOverridesState(next);
+    void dbSetEntityOverrides(next);
+  }, []);
+
+  const renameEntity = useCallback(
+    (id: string, label: string) => {
+      saveOverrides({ ...entityOverrides, renames: { ...entityOverrides.renames, [id]: label } });
+    },
+    [entityOverrides, saveOverrides],
+  );
+
+  const hideEntity = useCallback(
+    (id: string) => {
+      if (!entityOverrides.hidden.includes(id)) {
+        saveOverrides({ ...entityOverrides, hidden: [...entityOverrides.hidden, id] });
+      }
+      setLibrarySel((s) => (s.kind === 'entity' && s.id === id ? { kind: 'home' } : s));
+    },
+    [entityOverrides, saveOverrides],
+  );
+
+  const mergeEntities = useCallback(
+    (fromId: string, intoId: string) => {
+      if (fromId === intoId) return;
+      saveOverrides({ ...entityOverrides, merges: { ...entityOverrides.merges, [fromId]: intoId } });
+      setLibrarySel((s) => (s.kind === 'entity' && s.id === fromId ? { kind: 'entity', id: intoId } : s));
+    },
+    [entityOverrides, saveOverrides],
+  );
+
+  const setEntityKind = useCallback(
+    (id: string, kind: EntityKind | undefined) => {
+      const kinds = { ...entityOverrides.kinds };
+      if (kind) kinds[id] = kind;
+      else delete kinds[id];
+      saveOverrides({ ...entityOverrides, kinds });
+    },
+    [entityOverrides, saveOverrides],
+  );
+
+  const togglePin = useCallback((ref: LibraryItemRef) => {
+    setPinsState((prev) => {
+      const exists = prev.some((p) => p.kind === ref.kind && p.id === ref.id);
+      const next = exists ? prev.filter((p) => !(p.kind === ref.kind && p.id === ref.id)) : [ref, ...prev];
+      void dbSetPins(next);
+      return next;
+    });
+  }, []);
+
+  const isPinned = useCallback(
+    (ref: LibraryItemRef) => pins.some((p) => p.kind === ref.kind && p.id === ref.id),
+    [pins],
+  );
+
+  const persistCollections = useCallback((next: Collection[]) => {
+    setCollectionsState(next);
+    void dbSetCollections(next);
+  }, []);
+
+  const createCollection = useCallback(
+    (name: string, items: LibraryItemRef[] = []) => {
+      const id = `col-${Date.now()}`;
+      persistCollections([...collections, { id, name, items, createdAt: new Date().toISOString() }]);
+      pushToast(`Collection “${name}” created.`, 'success');
+      return id;
+    },
+    [collections, persistCollections, pushToast],
+  );
+
+  const renameCollection = useCallback(
+    (id: string, name: string) => {
+      persistCollections(collections.map((c) => (c.id === id ? { ...c, name } : c)));
+    },
+    [collections, persistCollections],
+  );
+
+  const deleteCollection = useCallback(
+    (id: string) => {
+      persistCollections(collections.filter((c) => c.id !== id));
+      setLibrarySel((s) => (s.kind === 'collection' && s.id === id ? { kind: 'home' } : s));
+    },
+    [collections, persistCollections],
+  );
+
+  const addToCollection = useCallback(
+    (colId: string, ref: LibraryItemRef) => {
+      const col = collections.find((c) => c.id === colId);
+      if (!col) return;
+      if (col.items.some((i) => i.kind === ref.kind && i.id === ref.id)) {
+        pushToast(`Already in “${col.name}”.`, 'info');
+        return;
+      }
+      persistCollections(collections.map((c) => (c.id === colId ? { ...c, items: [...c.items, ref] } : c)));
+      pushToast(`Added to “${col.name}”.`, 'success');
+    },
+    [collections, persistCollections, pushToast],
+  );
+
+  const removeFromCollection = useCallback(
+    (colId: string, ref: LibraryItemRef) => {
+      persistCollections(
+        collections.map((c) =>
+          c.id === colId ? { ...c, items: c.items.filter((i) => !(i.kind === ref.kind && i.id === ref.id)) } : c,
+        ),
+      );
+    },
+    [collections, persistCollections],
+  );
+
+  const moveInCollection = useCallback(
+    (colId: string, index: number, dir: -1 | 1) => {
+      persistCollections(
+        collections.map((c) => {
+          if (c.id !== colId) return c;
+          const items = [...c.items];
+          const j = index + dir;
+          if (j < 0 || j >= items.length) return c;
+          [items[index], items[j]] = [items[j], items[index]];
+          return { ...c, items };
+        }),
+      );
+    },
+    [collections, persistCollections],
+  );
+
+  // Collapse version groups to their newest member.
+  const groupedOutputs = useMemo(() => {
+    const newestByGroup = new Map<string, OutputCard>();
+    for (const card of outputs) {
+      const cur = newestByGroup.get(card.groupId);
+      if (!cur || card.date > cur.date) newestByGroup.set(card.groupId, card);
+    }
+    return [...newestByGroup.values()].sort((a, b) => (a.date < b.date ? 1 : -1));
+  }, [outputs]);
+
+  const versionsOf = useCallback(
+    (groupId: string) => outputs.filter((o) => o.groupId === groupId).sort((a, b) => (a.date < b.date ? 1 : -1)),
+    [outputs],
+  );
+
   // ---- search ----
   const scopeIdsKey = useMemo(
     () => (scope.kind === 'all' && !keywordChip ? null : scopedConvs.map((c) => c.uuid)),
@@ -381,6 +636,26 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     setScope,
     saveWorkspace,
     deleteWorkspace,
+    visibleEntities,
+    renameEntity,
+    hideEntity,
+    mergeEntities,
+    setEntityKind,
+    pins,
+    togglePin,
+    isPinned,
+    collections,
+    createCollection,
+    renameCollection,
+    deleteCollection,
+    addToCollection,
+    removeFromCollection,
+    moveInCollection,
+    librarySel,
+    setLibrarySel,
+    groupedOutputs,
+    versionsOf,
+    prevImportAt,
     theme,
     toggleTheme,
     query,

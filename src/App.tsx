@@ -2,10 +2,9 @@ import { useState } from 'react';
 import { StoreProvider, useStore } from './state/store';
 import { TopBar, type Tab } from './components/TopBar';
 import { SearchBar } from './components/SearchBar';
+import { LibraryView } from './components/library/LibraryView';
 import { MapView } from './components/MapView';
 import { TimelineView } from './components/TimelineView';
-import { OutputsView } from './components/OutputsView';
-import { AllChatsView } from './components/AllChatsView';
 import { ReadingPane } from './components/ReadingPane';
 import { SetupPanel } from './components/SetupPanel';
 import { WorkspaceModal } from './components/WorkspaceModal';
@@ -13,7 +12,7 @@ import { DropCatcher, ProgressCard, SkippedModal, StaleBanner, Toasts } from './
 
 function Shell() {
   const { convMeta, loading } = useStore();
-  const [tab, setTab] = useState<Tab>('map');
+  const [tab, setTab] = useState<Tab>('library');
   const [showWorkspaces, setShowWorkspaces] = useState<string | null | false>(false);
   const [showSkipped, setShowSkipped] = useState(false);
 
@@ -29,10 +28,9 @@ function Shell() {
       />
       <StaleBanner />
       <main className="main">
+        {tab === 'library' && <LibraryView />}
         {tab === 'map' && <MapView />}
         {tab === 'timeline' && <TimelineView />}
-        {tab === 'outputs' && <OutputsView />}
-        {tab === 'chats' && <AllChatsView />}
         {!empty && <SearchBar />}
       </main>
 
