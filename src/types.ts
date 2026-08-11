@@ -96,6 +96,32 @@ export interface LibraryItemRef {
   id: string;
 }
 
+/** A point in the history where a real file was asked for or produced. */
+export interface FileMoment {
+  id: string; // convId/msgId
+  convId: string;
+  msgId: string;
+  /** The message whose text a rebuild uses (the file card itself is often just "here you go"). */
+  sourceMsgId: string;
+  convName: string;
+  date: string;
+  fileNames: string[];
+  /** True when the preceding human message explicitly asked for a file. */
+  asked: boolean;
+}
+
+/** A real file kept forever in the local archive (captured from Downloads or attached by hand). */
+export interface StoredFileMeta {
+  id: string;
+  name: string;
+  size: number;
+  lastModified: number;
+  capturedAt: string;
+  source: 'watched' | 'attached';
+  linkedMomentId?: string;
+  linkedConvId?: string;
+}
+
 export interface Collection {
   id: string;
   name: string;

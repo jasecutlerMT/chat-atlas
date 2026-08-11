@@ -54,12 +54,39 @@ seconds, unpacked, merged in (never duplicated), and announced with a little
 "5 new conversations, 3 updated" message. Prefer to do it by hand? Drag the
 zip anywhere onto the window, any time.
 
+## Documents & files: never lose a file Claude made again
+
+An honest fact first: Claude's data export contains the *words* of what
+Claude made for you, but never the actual PDF or Word file — those bytes
+only ever exist on Anthropic's servers and, briefly, in your Downloads
+folder when you click download. Chat Atlas works with that reality:
+
+- **Going forward, you keep the exact file automatically.** Chat Atlas
+  already watches your Downloads folder; it knows the filenames your chats
+  mention, so the moment you download a file Claude made, a permanent
+  private copy is kept and filed against the right conversation. Delete the
+  download, empty the bin — the original stays yours, re-downloadable
+  forever from the **Documents & files** shelf.
+- **Every file-moment in your history is listed** on that shelf — each time
+  you asked for a PDF/Word file or Claude produced one — with an
+  **"I asked for a file"** filter. Rows with the real file show
+  **Original kept ✓**; every row can be rebuilt as a fresh Word document,
+  PDF or markdown from the captured words.
+- **Old files from before Chat Atlas existed** can't be conjured back, but
+  if the file still exists anywhere on your Mac, the paperclip button on its
+  row attaches it — kept permanently from then on.
+- **Auto-save folder**: pick a folder once (say "Chat Atlas Documents") and
+  new documents are also written there as real files — originals as
+  captured, rebuilt Word files otherwise. "Save all now" writes the whole
+  shelf in one go.
+
 ## How your library is organised
 
 The app opens onto **the Library** — your knowledge, not your chat log:
 
 - **Overview** — what's new since your last export, what you've pinned, and
   the latest things Claude made for you.
+- **Documents & files** — the file archive described above.
 - **By type** — Research briefs, Email or message drafts, Plans or
   frameworks, Scripts, Documents, Code. All found and labelled automatically.
 - **Companies, people & tools** — Chat Atlas reads your conversations and

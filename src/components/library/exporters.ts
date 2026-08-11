@@ -2,8 +2,8 @@
 // synchronously inside the click, so the PDF path opens it first and fills
 // it once compilation finishes.
 
-import type { Entity, OutputCard } from '../../types';
-import { compileOutputs, compiledToMarkdown, type CompiledDoc } from '../../lib/compile';
+import type { Entity, FileMoment, OutputCard } from '../../types';
+import { compileMoment, compileOutputs, compiledToMarkdown, type CompiledDoc } from '../../lib/compile';
 import { downloadBlob, downloadText, safeFilename } from '../../lib/download';
 import { fillPrintWindow, openPrintWindow } from '../../lib/renderPrint';
 
@@ -31,5 +31,14 @@ export async function exportSingleCard(card: OutputCard, entities: Entity[], for
     return;
   }
   const doc = await compileOutputs(card.title, undefined, [card], entities);
+  await exportCompiled(doc, format);
+}
+
+export async function exportMoment(moment: FileMoment, format: 'docx' | 'pdf' | 'md'): Promise<void> {
+  if (format === 'pdf') {
+    exportCompiledPdf(() => compileMoment(moment));
+    return;
+  }
+  const doc = await compileMoment(moment);
   await exportCompiled(doc, format);
 }

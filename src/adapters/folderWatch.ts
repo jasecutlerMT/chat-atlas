@@ -46,10 +46,19 @@ export class FolderWatcher {
   private scanning = false;
   private onZip: (file: File) => Promise<boolean>;
   private onStatus: (s: WatcherStatus) => void;
+  /** Called for doc files (pdf/docx/…) whose names Claude's chats mention — the original-capture path. */
+  private onDocFile: ((file: File) => Promise<boolean>) | null = null;
+  /** Lowercased filenames worth capturing; refreshed by the store after every import. */
+  private wantedNames = new Set<string>();
 
   constructor(onZip: (file: File) => Promise<boolean>, onStatus: (s: WatcherStatus) => void) {
     this.onZip = onZip;
     this.onStatus = onStatus;
+  }
+
+  setDocCapture(onDocFile: (file: File) => Promise<boolean>, wantedNames: string[]): void {
+    this.onDocFile = onDocFile;
+    this.wantedNames = new Set(wantedNames.map((n) => n.toLowerCase()));
   }
 
   /** Try to resume watching from a previously saved folder handle. */
@@ -133,11 +142,16 @@ export class FolderWatcher {
     try {
       const seen = (await getMeta<SeenMap>('seenZips')) ?? {};
       const candidates: File[] = [];
+      const docCandidates: File[] = [];
       for await (const entry of this.handle.values()) {
-        if (entry.kind !== 'file' || !/\.zip$/i.test(entry.name)) continue;
+        if (entry.kind !== 'file') continue;
+        const isZip = /\.zip$/i.test(entry.name);
+        const isWantedDoc = this.onDocFile && this.wantedNames.has(entry.name.toLowerCase());
+        if (!isZip && !isWantedDoc) continue;
         try {
           const file = await entry.getFile();
-          if (!seen[fileKey(file.name, file.size, file.lastModified)]) candidates.push(file);
+          if (seen[fileKey(file.name, file.size, file.lastModified)]) continue;
+          (isZip ? candidates : docCandidates).push(file);
         } catch {
           /* the file may be mid-download; try again next scan */
         }
@@ -147,6 +161,15 @@ export class FolderWatcher {
       for (const file of candidates) {
         const processed = await this.onZip(file);
         if (processed) {
+          const fresh = (await getMeta<SeenMap>('seenZips')) ?? {};
+          fresh[fileKey(file.name, file.size, file.lastModified)] = true;
+          await setMeta('seenZips', fresh);
+        }
+      }
+      // Keep originals of the documents Claude made (matched by name).
+      for (const file of docCandidates) {
+        const kept = await this.onDocFile!(file);
+        if (kept) {
           const fresh = (await getMeta<SeenMap>('seenZips')) ?? {};
           fresh[fileKey(file.name, file.size, file.lastModified)] = true;
           await setMeta('seenZips', fresh);

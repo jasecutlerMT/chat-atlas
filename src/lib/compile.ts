@@ -2,10 +2,11 @@
 // (.docx, print/PDF, markdown) consume, so cover/contents/ordering logic
 // exists exactly once.
 
-import type { Entity, OutputCard } from '../types';
+import type { Entity, FileMoment, OutputCard } from '../types';
 import { OUTPUT_TYPE_LABELS } from './classify';
 import { formatDate } from './text';
 import { outputFullText } from './download';
+import { getConversation } from '../db/db';
 
 export interface CompiledSection {
   title: string;
@@ -43,6 +44,29 @@ export async function compileOutputs(
     });
   }
   return { title, subtitle, createdAt: new Date().toISOString(), sections };
+}
+
+/** A rebuildable document for one file-moment: the content behind "that file Claude made". */
+export async function compileMoment(m: FileMoment): Promise<CompiledDoc> {
+  const conv = await getConversation(m.convId);
+  const msg = conv?.messages.find((x) => x.uuid === m.sourceMsgId);
+  const markdown = msg?.text?.trim() || 'The words behind this file were not included in the export.';
+  const title =
+    m.fileNames[0]?.replace(/\.[a-z0-9]+$/i, '').replace(/[-_]+/g, ' ').trim() || m.convName;
+  return {
+    title,
+    createdAt: new Date().toISOString(),
+    sections: [
+      {
+        title,
+        typeLabel: 'Document',
+        date: formatDate(m.date),
+        sourceConv: m.convName,
+        entityLabels: [],
+        markdown,
+      },
+    ],
+  };
 }
 
 export function compiledToMarkdown(doc: CompiledDoc): string {

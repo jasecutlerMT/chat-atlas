@@ -8,7 +8,8 @@ import { OUTPUT_TYPE_LABELS } from '../../lib/classify';
 const TYPE_ORDER: OutputType[] = ['research', 'email', 'plan', 'script', 'document', 'code'];
 
 export function LibrarySidebar({ newCount }: { newCount: number }) {
-  const { librarySel, setLibrarySel, groupedOutputs, scopedConvs, visibleEntities, collections, pins, createCollection } = useStore();
+  const { librarySel, setLibrarySel, groupedOutputs, scopedConvs, visibleEntities, collections, pins, createCollection, fileMoments, originalsByMoment } =
+    useStore();
   const [showAllEntities, setShowAllEntities] = useState(false);
   const [newCol, setNewCol] = useState('');
   const [addingCol, setAddingCol] = useState(false);
@@ -46,6 +47,12 @@ export function LibrarySidebar({ newCount }: { newCount: number }) {
       </button>
       <button className={`side-item ${is('recent') ? 'side-on' : ''}`} onClick={() => setLibrarySel({ kind: 'recent' })}>
         What’s new {newCount > 0 && <span className="side-count side-count-hot">{newCount}</span>}
+      </button>
+      <button className={`side-item ${is('documents') ? 'side-on' : ''}`} onClick={() => setLibrarySel({ kind: 'documents' })}>
+        Documents & files{' '}
+        <span className="side-count" title={`${originalsByMoment.size} with the original kept`}>
+          {fileMoments.length}
+        </span>
       </button>
 
       <p className="side-head">By type</p>

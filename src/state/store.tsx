@@ -45,8 +45,15 @@ import {
   setEntityOverrides as dbSetEntityOverrides,
   EMPTY_OVERRIDES,
   DERIVED_SCHEMA_VERSION,
+  fileArchiveId,
+  putStoredFile,
+  listStoredFiles,
+  getStoredFileBlob,
 } from '../db/db';
 import { FolderWatcher, browserSupportsWatching, type WatcherStatus } from '../adapters/folderWatch';
+import { SaveFolder, type SaveFolderStatus, type WritableDirHandle } from '../adapters/saveFolder';
+import { downloadBlob } from '../lib/download';
+import type { FileMoment, StoredFileMeta } from '../types';
 
 export type Scope = { kind: 'all' } | { kind: 'project'; uuid: string; name: string } | { kind: 'workspace'; id: string; name: string };
 
@@ -66,6 +73,7 @@ export type LibrarySelection =
   | { kind: 'home' }
   | { kind: 'pinned' }
   | { kind: 'recent' }
+  | { kind: 'documents' }
   | { kind: 'type'; type: OutputType }
   | { kind: 'entity'; id: string }
   | { kind: 'collection'; id: string }
@@ -106,6 +114,18 @@ interface StoreValue {
   groupedOutputs: OutputCard[];
   versionsOf: (groupId: string) => OutputCard[];
   prevImportAt: string | null;
+
+  // The Documents archive
+  fileMoments: FileMoment[];
+  storedFiles: StoredFileMeta[];
+  originalsByMoment: Map<string, StoredFileMeta>;
+  attachOriginal: (moment: FileMoment, file: File) => Promise<void>;
+  downloadOriginal: (id: string) => Promise<void>;
+  saveFolderStatus: SaveFolderStatus;
+  chooseSaveFolder: () => Promise<void>;
+  resumeSaveFolder: () => Promise<void>;
+  turnOffSaveFolder: () => Promise<void>;
+  saveAllToFolder: () => Promise<void>;
 
   theme: 'dark' | 'light';
   toggleTheme: () => void;
@@ -160,6 +180,10 @@ export function StoreProvider({ children }: { children: ReactNode }) {
   const [collections, setCollectionsState] = useState<Collection[]>([]);
   const [librarySel, setLibrarySel] = useState<LibrarySelection>({ kind: 'home' });
   const [prevImportAt, setPrevImportAt] = useState<string | null>(null);
+  const [fileMoments, setFileMoments] = useState<FileMoment[]>([]);
+  const [referencedFiles, setReferencedFiles] = useState<string[]>([]);
+  const [storedFiles, setStoredFiles] = useState<StoredFileMeta[]>([]);
+  const [saveFolderStatus, setSaveFolderStatus] = useState<SaveFolderStatus>({ state: 'off' });
   const [skipped, setSkipped] = useState<SkippedItem[]>([]);
   const [workspaces, setWorkspacesState] = useState<Workspace[]>([]);
   const [scope, setScopeState] = useState<Scope>({ kind: 'all' });
@@ -179,6 +203,8 @@ export function StoreProvider({ children }: { children: ReactNode }) {
 
   const workerRef = useRef<Worker | null>(null);
   const watcherRef = useRef<FolderWatcher | null>(null);
+  const saveFolderRef = useRef<SaveFolder | null>(null);
+  const momentsRef = useRef<FileMoment[]>([]);
   const importQueue = useRef<Promise<void>>(Promise.resolve());
   const pendingImports = useRef<Map<string, (s: ImportSummary) => void>>(new Map());
   const latestSearchId = useRef(0);
@@ -214,6 +240,9 @@ export function StoreProvider({ children }: { children: ReactNode }) {
       setEdges(bundle.edges);
       setOutputs(bundle.outputs);
       setEntities(bundle.entities ?? []);
+      setFileMoments(bundle.fileMoments ?? []);
+      momentsRef.current = bundle.fileMoments ?? [];
+      setReferencedFiles(bundle.referencedFiles ?? []);
       // Data imported by an older version of the app: derive the new
       // organisation (entities, versions, better titles) from what's already
       // stored — no re-import needed.
@@ -228,6 +257,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     setPinsState(pn);
     setCollectionsState(cols);
     setEntityOverridesState(ov);
+    setStoredFiles(await listStoredFiles());
 
     // First run with data: default the scope to a project or workspace named
     // "Career" if one exists, as requested.
@@ -588,6 +618,162 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     [outputs],
   );
 
+  // ---- the Documents archive ----
+
+  const originalsByMoment = useMemo(() => {
+    const map = new Map<string, StoredFileMeta>();
+    for (const f of storedFiles) {
+      if (f.linkedMomentId && !map.has(f.linkedMomentId)) map.set(f.linkedMomentId, f);
+    }
+    return map;
+  }, [storedFiles]);
+
+  /** A doc file from the watched folder whose name Claude's chats mention: keep it forever. */
+  const captureDocFile = useCallback(
+    async (file: File): Promise<boolean> => {
+      const lower = file.name.toLowerCase();
+      const moment = momentsRef.current.find((m) => m.fileNames.some((n) => n.toLowerCase() === lower));
+      const meta: StoredFileMeta = {
+        id: fileArchiveId(file.name, file.size, file.lastModified),
+        name: file.name,
+        size: file.size,
+        lastModified: file.lastModified,
+        capturedAt: new Date().toISOString(),
+        source: 'watched',
+        linkedMomentId: moment?.id,
+        linkedConvId: moment?.convId,
+      };
+      await putStoredFile(meta, file);
+      setStoredFiles(await listStoredFiles());
+      pushToast(`Kept the original file “${file.name}” — it's yours forever now.`, 'success');
+      const sf = saveFolderRef.current;
+      if (sf && (await sf.ready())) void sf.writeFile(file.name, file);
+      return true;
+    },
+    [pushToast],
+  );
+
+  const attachOriginal = useCallback(
+    async (moment: FileMoment, file: File) => {
+      const meta: StoredFileMeta = {
+        id: fileArchiveId(file.name, file.size, file.lastModified),
+        name: file.name,
+        size: file.size,
+        lastModified: file.lastModified,
+        capturedAt: new Date().toISOString(),
+        source: 'attached',
+        linkedMomentId: moment.id,
+        linkedConvId: moment.convId,
+      };
+      await putStoredFile(meta, file);
+      setStoredFiles(await listStoredFiles());
+      pushToast(`Original “${file.name}” attached and kept.`, 'success');
+      const sf = saveFolderRef.current;
+      if (sf && (await sf.ready())) void sf.writeFile(file.name, file);
+    },
+    [pushToast],
+  );
+
+  const downloadOriginal = useCallback(
+    async (id: string) => {
+      const blob = await getStoredFileBlob(id);
+      const meta = storedFiles.find((f) => f.id === id);
+      if (blob && meta) downloadBlob(blob, meta.name);
+    },
+    [storedFiles],
+  );
+
+  const chooseSaveFolder = useCallback(async () => {
+    const ok = await saveFolderRef.current?.pick();
+    if (ok) {
+      if (!(await getMeta<string>('saveFolderSince'))) await setMeta('saveFolderSince', new Date().toISOString());
+      pushToast('From now on, new documents also land in that folder as real files.', 'success');
+    }
+  }, [pushToast]);
+
+  const resumeSaveFolder = useCallback(async () => {
+    await saveFolderRef.current?.resume();
+  }, []);
+
+  const turnOffSaveFolder = useCallback(async () => {
+    await saveFolderRef.current?.turnOff();
+  }, []);
+
+  /** Write the whole archive to the save folder: kept originals as-is, rebuilt Word files for the rest. */
+  const saveAllToFolder = useCallback(async () => {
+    const sf = saveFolderRef.current;
+    if (!sf || !(await sf.ready())) {
+      pushToast('Pick a folder first (or click to allow it again), then try once more.', 'error');
+      return;
+    }
+    let written = 0;
+    for (const f of storedFiles) {
+      const blob = await getStoredFileBlob(f.id);
+      if (blob && (await sf.writeFile(f.name, blob))) written++;
+    }
+    const { compileMoment } = await import('../lib/compile');
+    const { renderDocxBlob } = await import('../lib/renderDocx');
+    for (const m of fileMoments) {
+      if (originalsByMoment.has(m.id)) continue;
+      try {
+        const doc = await compileMoment(m);
+        const blob = await renderDocxBlob(doc);
+        const base = (m.fileNames[0] ?? doc.title).replace(/\.[a-z0-9]+$/i, '');
+        if (await sf.writeFile(`${base}.docx`, blob)) written++;
+      } catch {
+        /* fail soft per file */
+      }
+    }
+    pushToast(written > 0 ? `Saved ${written} file${written === 1 ? '' : 's'} to the folder.` : 'Nothing to save yet.', written ? 'success' : 'info');
+  }, [storedFiles, fileMoments, originalsByMoment, pushToast]);
+
+  // Auto-save: new file-moments (arriving with new imports) get a rebuilt
+  // .docx written to the save folder, unless their original was captured.
+  useEffect(() => {
+    if (saveFolderStatus.state !== 'on') return;
+    void (async () => {
+      const since = await getMeta<string>('saveFolderSince');
+      if (!since) return;
+      const done = (await getMeta<Record<string, true>>('autoSavedMoments')) ?? {};
+      const pending = fileMoments.filter((m) => m.date > since && !done[m.id] && !originalsByMoment.has(m.id));
+      if (pending.length === 0) return;
+      const sf = saveFolderRef.current;
+      if (!sf || !(await sf.ready())) return;
+      const { compileMoment } = await import('../lib/compile');
+      const { renderDocxBlob } = await import('../lib/renderDocx');
+      let written = 0;
+      for (const m of pending) {
+        try {
+          const doc = await compileMoment(m);
+          const blob = await renderDocxBlob(doc);
+          const base = (m.fileNames[0] ?? doc.title).replace(/\.[a-z0-9]+$/i, '');
+          if (await sf.writeFile(`${base}.docx`, blob)) written++;
+        } catch {
+          /* fail soft per file */
+        }
+        done[m.id] = true;
+      }
+      await setMeta('autoSavedMoments', done);
+      if (written > 0) pushToast(`Saved ${written} new document${written === 1 ? '' : 's'} to your folder.`, 'success');
+    })();
+  }, [fileMoments, saveFolderStatus, originalsByMoment, pushToast]);
+
+  // Keep the watcher's capture list current, and restore the save folder once.
+  useEffect(() => {
+    watcherRef.current?.setDocCapture(captureDocFile, referencedFiles);
+  }, [captureDocFile, referencedFiles]);
+
+  useEffect(() => {
+    const sf = new SaveFolder((s) => setSaveFolderStatus(s));
+    saveFolderRef.current = sf;
+    void sf.restore();
+    if (import.meta.env.DEV) {
+      const hooks = ((window as unknown as Record<string, unknown>).__atlasTest ?? {}) as Record<string, unknown>;
+      hooks.injectSaveHandle = (h: unknown) => sf.setHandleForTesting(h as WritableDirHandle);
+      (window as unknown as Record<string, unknown>).__atlasTest = hooks;
+    }
+  }, []);
+
   // ---- search ----
   const scopeIdsKey = useMemo(
     () => (scope.kind === 'all' && !keywordChip ? null : scopedConvs.map((c) => c.uuid)),
@@ -656,6 +842,16 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     groupedOutputs,
     versionsOf,
     prevImportAt,
+    fileMoments,
+    storedFiles,
+    originalsByMoment,
+    attachOriginal,
+    downloadOriginal,
+    saveFolderStatus,
+    chooseSaveFolder,
+    resumeSaveFolder,
+    turnOffSaveFolder,
+    saveAllToFolder,
     theme,
     toggleTheme,
     query,

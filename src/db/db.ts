@@ -11,15 +11,17 @@ import type {
   ConvMeta,
   Entity,
   EntityOverrides,
+  FileMoment,
   GraphEdge,
   LibraryItemRef,
   OutputCard,
   SkippedItem,
+  StoredFileMeta,
   Workspace,
 } from '../types';
 
 const DB_NAME = 'chat-atlas';
-const DB_VERSION = 1;
+const DB_VERSION = 2;
 
 let dbPromise: Promise<IDBPDatabase> | null = null;
 
@@ -27,9 +29,11 @@ export function getDB(): Promise<IDBPDatabase> {
   if (!dbPromise) {
     dbPromise = openDB(DB_NAME, DB_VERSION, {
       upgrade(db) {
-        db.createObjectStore('conversations', { keyPath: 'uuid' });
-        db.createObjectStore('meta');
-        db.createObjectStore('derived');
+        // Guarded creates: runs for fresh installs and for v1 -> v2 upgrades.
+        if (!db.objectStoreNames.contains('conversations')) db.createObjectStore('conversations', { keyPath: 'uuid' });
+        if (!db.objectStoreNames.contains('meta')) db.createObjectStore('meta');
+        if (!db.objectStoreNames.contains('derived')) db.createObjectStore('derived');
+        if (!db.objectStoreNames.contains('files')) db.createObjectStore('files', { keyPath: 'id' });
       },
     });
   }
@@ -65,7 +69,7 @@ export async function setMeta(key: string, value: unknown): Promise<void> {
 
 // ---- derived ----
 
-export const DERIVED_SCHEMA_VERSION = 2;
+export const DERIVED_SCHEMA_VERSION = 3;
 
 export interface DerivedBundle {
   schemaVersion?: number;
@@ -73,6 +77,9 @@ export interface DerivedBundle {
   edges: GraphEdge[];
   outputs: OutputCard[];
   entities?: Entity[];
+  fileMoments?: FileMoment[];
+  /** Doc-like filenames mentioned anywhere; the watcher's original-capture list. */
+  referencedFiles?: string[];
 }
 
 export async function getDerived(): Promise<DerivedBundle | undefined> {
@@ -115,6 +122,42 @@ export async function getCollections(): Promise<Collection[]> {
 
 export async function setCollections(cols: Collection[]): Promise<void> {
   await setMeta('collections', cols);
+}
+
+// ---- the local file archive (kept originals) ----
+
+interface StoredFileRecord extends StoredFileMeta {
+  blob: Blob;
+}
+
+export function fileArchiveId(name: string, size: number, lastModified: number): string {
+  return `${name.toLowerCase()}|${size}|${lastModified}`;
+}
+
+export async function putStoredFile(meta: StoredFileMeta, blob: Blob): Promise<void> {
+  await (await getDB()).put('files', { ...meta, blob } satisfies StoredFileRecord);
+}
+
+export async function listStoredFiles(): Promise<StoredFileMeta[]> {
+  const all: StoredFileRecord[] = await (await getDB()).getAll('files');
+  return all
+    .map(({ blob: _blob, ...meta }) => meta)
+    .sort((a, b) => (a.capturedAt < b.capturedAt ? 1 : -1));
+}
+
+export async function getStoredFileBlob(id: string): Promise<Blob | undefined> {
+  const rec: StoredFileRecord | undefined = await (await getDB()).get('files', id);
+  return rec?.blob;
+}
+
+export async function updateStoredFileMeta(id: string, patch: Partial<StoredFileMeta>): Promise<void> {
+  const db = await getDB();
+  const rec: StoredFileRecord | undefined = await db.get('files', id);
+  if (rec) await db.put('files', { ...rec, ...patch });
+}
+
+export async function deleteStoredFile(id: string): Promise<void> {
+  await (await getDB()).delete('files', id);
 }
 
 export const EMPTY_OVERRIDES: EntityOverrides = { hidden: [], renames: {}, merges: {}, kinds: {} };

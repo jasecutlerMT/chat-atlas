@@ -7,6 +7,7 @@ import type { ConvMeta, EntityKind, OutputCard } from '../../types';
 import { LibraryRow, ConversationRow } from './LibraryRow';
 import { LibrarySidebar } from './LibrarySidebar';
 import { CompileDialog } from './CompileDialog';
+import { DocumentsPage } from './DocumentsPage';
 import { AllChatsView } from '../AllChatsView';
 import { OUTPUT_TYPE_LABELS } from '../../lib/classify';
 import { formatDate } from '../../lib/text';
@@ -247,6 +248,10 @@ export function LibraryView() {
         </>
       );
     }
+  } else if (librarySel.kind === 'documents') {
+    heading = 'Documents & files';
+    sub = 'Every file you asked for or Claude produced — originals kept when caught, rebuilds always available.';
+    content = <DocumentsPage />;
   } else if (librarySel.kind === 'conversations') {
     heading = 'All conversations';
     sub = '';

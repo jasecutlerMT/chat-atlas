@@ -170,6 +170,20 @@ export async function makeFixtures() {
       msg('human', 'Honest take: enterprise or mid-market for my next role?', '2026-06-25T21:00:00.000000Z'),
       msg('assistant', LONG_DOC, '2026-06-25T21:05:00.000000Z'),
     ]),
+    conv(11, 'Turn the Acme brief into a file', '2026-06-26T10:00:00.000000Z', '2026-06-26T10:30:00.000000Z', [
+      msg('human', 'Please turn the Acme Logistics research brief into a docx file I can send to my manager.', '2026-06-26T10:00:00.000000Z'),
+      msg('assistant', BRIEF, '2026-06-26T10:02:00.000000Z'),
+      msg('human', 'Perfect. Give me the file.', '2026-06-26T10:10:00.000000Z'),
+      (() => {
+        const m = msg(
+          'assistant',
+          "I've created your file: acme-logistics-brief.docx — click the download card above this message to save it.",
+          '2026-06-26T10:12:00.000000Z',
+        );
+        m.files = [{ file_name: 'acme-logistics-brief.docx' }];
+        return m;
+      })(),
+    ]),
     // Deliberately corrupted: no uuid — must be skipped with a readable reason.
     { name: 'Corrupted conversation', created_at: '2026-06-26T00:00:00.000000Z', updated_at: '2026-06-26T00:00:00.000000Z', chat_messages: [] },
   ];
@@ -198,6 +212,12 @@ export async function makeFixtures() {
         '# Negotiation plan\n\n## Step 1: Anchor with enthusiasm\nOpen warmly, then name the number you want with the band as your evidence.\n\n## Step 2: Hold the silence\nAfter the number, stop talking and let the silence negotiate.\n\n## Step 3: Trade, do not cave\nIf they hold firm, trade for a written review clause tied to quota instead of caving on the base.',
         future,
       ),
+      msg('human', 'Great. Can I have that as a PDF file to print?', future),
+      (() => {
+        const m = msg('assistant', "I've created northwind-negotiation-plan.pdf — use the download card above to save it.", future);
+        m.files = [{ file_name: 'northwind-negotiation-plan.pdf' }];
+        return m;
+      })(),
     ]),
   );
   await writeZip('sample2.zip', conversations2);

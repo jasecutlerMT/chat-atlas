@@ -23,6 +23,7 @@ import {
 import { computeTfidf } from '../lib/tfidf';
 import { extractOutputs } from '../lib/classify';
 import { detectEntities, decorateTitles } from '../lib/entities';
+import { detectFileMoments, referencedFilenames } from '../lib/fileMoments';
 import { groupVersions, buildTextLookup } from '../lib/versions';
 import { countWords, firstLine } from '../lib/text';
 import type {
@@ -145,12 +146,24 @@ async function buildDerived(convs: Conversation[]): Promise<void> {
   const entities = detectEntities(convs, outputs);
   decorateTitles(outputs, entities);
 
-  post({ t: 'progress', label: 'Grouping drafts of the same thing…', pct: 0.96 });
+  post({ t: 'progress', label: 'Grouping drafts of the same thing…', pct: 0.95 });
   groupVersions(outputs, buildTextLookup(convs));
+
+  post({ t: 'progress', label: 'Finding the files you asked for…', pct: 0.97 });
+  const fileMoments = detectFileMoments(convs);
+  const referencedFiles = referencedFilenames(fileMoments);
 
   outputs.sort((a, b) => (a.date < b.date ? 1 : -1));
   convMeta.sort((a, b) => (a.updated_at < b.updated_at ? 1 : -1));
-  await setDerived({ schemaVersion: DERIVED_SCHEMA_VERSION, convMeta, edges: tfidf.edges, outputs, entities });
+  await setDerived({
+    schemaVersion: DERIVED_SCHEMA_VERSION,
+    convMeta,
+    edges: tfidf.edges,
+    outputs,
+    entities,
+    fileMoments,
+    referencedFiles,
+  });
 }
 
 // ---- import ----

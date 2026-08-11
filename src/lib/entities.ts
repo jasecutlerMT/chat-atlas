@@ -225,8 +225,30 @@ export function detectEntities(convs: Conversation[], outputs: OutputCard[]): En
     });
   }
 
-  entities.sort((a, b) => b.score - a.score);
-  const kept = entities.slice(0, MAX_ENTITIES);
+  // Fold sub-phrases into their stronger long form: a title saying just
+  // "Acme" should count towards "Acme Logistics", not create a twin entry.
+  const byKey = new Map(entities.map((e) => [e.id.replace(/^ent-/, '').replace(/-/g, ' '), e]));
+  const folded = new Set<string>();
+  for (const [key, e] of byKey) {
+    let best: Entity | null = null;
+    for (const [longKey, long] of byKey) {
+      if (longKey === key || folded.has(longKey)) continue;
+      if ((longKey.startsWith(key + ' ') || longKey.endsWith(' ' + key)) && (!best || long.score > best.score)) {
+        best = long;
+      }
+    }
+    if (best && best.score >= e.score * 0.5) {
+      best.count += e.count;
+      best.inTitles += e.inTitles;
+      best.convIds = [...new Set([...best.convIds, ...e.convIds])];
+      best.score = best.inTitles * 5 + best.convIds.length * 2 + Math.log2(1 + best.count);
+      folded.add(key);
+    }
+  }
+  const surviving = entities.filter((e) => !folded.has(e.id.replace(/^ent-/, '').replace(/-/g, ' ')));
+
+  surviving.sort((a, b) => b.score - a.score);
+  const kept = surviving.slice(0, MAX_ENTITIES);
 
   // Link outputs to entities by word-boundary label match in title + preview.
   const matchers = kept.map((e) => ({

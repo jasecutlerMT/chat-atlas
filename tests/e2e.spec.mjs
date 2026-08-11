@@ -218,6 +218,97 @@ test('old stored data is upgraded in place (no re-import needed)', async () => {
   await expect(page.locator('.side-entity', { hasText: 'Acme Logistics' })).toBeVisible({ timeout: 30_000 });
 });
 
+test('the Documents shelf lists file-moments and rebuilds a Word file', async () => {
+  await page.locator('.side-item', { hasText: 'Documents & files' }).click();
+  const row = page.locator('[data-testid="doc-row"]', { hasText: 'acme-logistics-brief.docx' });
+  await expect(row).toBeVisible();
+  await expect(row.locator('.badge-askedfile')).toBeVisible();
+  // Filter to explicit file requests.
+  await page.locator('.chip', { hasText: 'I asked for a file' }).click();
+  await expect(page.locator('[data-testid="doc-row"]', { hasText: 'acme-logistics-brief.docx' })).toBeVisible();
+  await page.locator('.chip', { hasText: 'All documents' }).click();
+  // Rebuild as Word: the content behind the file, verified inside the .docx.
+  await row.locator('button[title*="Rebuild"]').click();
+  const downloadPromise = page.waitForEvent('download');
+  await page.locator('.popover-item', { hasText: 'Word document' }).click();
+  const download = await downloadPromise;
+  const zip = await JSZip.loadAsync(readFileSync(await download.path()));
+  const docXml = await zip.file('word/document.xml').async('string');
+  expect(docXml).toContain('Acme Logistics');
+});
+
+test('the exact original file is caught from the watched folder and kept', async () => {
+  const ORIGINAL_BYTES = 'ORIGINAL-DOCX-BYTES-FROM-CLAUDE-9f3a';
+  await page.evaluate((bytes) => {
+    const file = new File([bytes], 'acme-logistics-brief.docx', { lastModified: Date.now() });
+    const fakeHandle = {
+      name: 'Downloads (test)',
+      kind: 'directory',
+      async *values() {
+        yield { kind: 'file', name: file.name, getFile: async () => file };
+      },
+      queryPermission: async () => 'granted',
+      requestPermission: async () => 'granted',
+    };
+    window.__atlasTest.injectDirHandle(fakeHandle);
+  }, ORIGINAL_BYTES);
+  await expect(page.locator('.toast', { hasText: 'Kept the original' })).toBeVisible({ timeout: 20_000 });
+
+  const row = page.locator('[data-testid="doc-row"]', { hasText: 'acme-logistics-brief.docx' });
+  await expect(row.locator('.badge-originalkept')).toBeVisible();
+  const downloadPromise = page.waitForEvent('download');
+  await row.locator('.doc-original-btn').click();
+  const download = await downloadPromise;
+  expect(readFileSync(await download.path(), 'utf8')).toBe(ORIGINAL_BYTES);
+
+  // The kept original survives a restart.
+  await page.reload();
+  await page.locator('.side-item', { hasText: 'Documents & files' }).click();
+  await expect(
+    page.locator('[data-testid="doc-row"]', { hasText: 'acme-logistics-brief.docx' }).locator('.badge-originalkept'),
+  ).toBeVisible({ timeout: 15_000 });
+});
+
+test('an original can be attached by hand to an old file-moment', async () => {
+  const row = page.locator('[data-testid="doc-row"]', { hasText: 'northwind-negotiation-plan.pdf' });
+  await expect(row).toBeVisible();
+  await expect(row.locator('.badge-rebuild')).toBeVisible();
+  const tmpFile = join(TMP, 'northwind-negotiation-plan.pdf');
+  const { writeFileSync } = await import('node:fs');
+  writeFileSync(tmpFile, 'HAND-ATTACHED-ORIGINAL-PDF');
+  await row.locator('[data-testid="attach-original"]').setInputFiles(tmpFile);
+  await expect(row.locator('.badge-originalkept')).toBeVisible();
+  const downloadPromise = page.waitForEvent('download');
+  await row.locator('.doc-original-btn').click();
+  expect(readFileSync(await (await downloadPromise).path(), 'utf8')).toBe('HAND-ATTACHED-ORIGINAL-PDF');
+});
+
+test('the auto-save folder receives real files', async () => {
+  await page.evaluate(() => {
+    window.__saves = [];
+    const mock = {
+      name: 'Chat Atlas Documents (test)',
+      queryPermission: async () => 'granted',
+      requestPermission: async () => 'granted',
+      getFileHandle: async (name) => ({
+        createWritable: async () => ({
+          write: async (blob) => {
+            window.__saves.push({ name, size: blob.size });
+          },
+          close: async () => {},
+        }),
+      }),
+    };
+    window.__atlasTest.injectSaveHandle(mock);
+  });
+  await expect(page.locator('.savefolder-bar', { hasText: 'Chat Atlas Documents (test)' })).toBeVisible();
+  await page.locator('.savefolder-bar .ghost-btn', { hasText: 'Save all now' }).click();
+  await expect(page.locator('.toast', { hasText: 'Saved' })).toBeVisible({ timeout: 30_000 });
+  const saves = await page.evaluate(() => window.__saves);
+  expect(saves.length).toBeGreaterThanOrEqual(2); // kept originals + rebuilt docx
+  expect(saves.some((s) => s.name === 'acme-logistics-brief.docx')).toBe(true);
+});
+
 test('a big export imports without freezing the app', async () => {
   test.setTimeout(180_000);
   const fresh = await context.browser().newContext({ viewport: { width: 1440, height: 900 } });
