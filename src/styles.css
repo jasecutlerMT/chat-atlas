@@ -1770,6 +1770,11 @@ input[type='range'] {
   font-weight: 650;
 }
 
+.side-item-strong {
+  font-weight: 650;
+  color: var(--text);
+}
+
 .side-more {
   text-align: left;
   padding: 5px 10px;
@@ -2163,6 +2168,157 @@ input[type='range'] {
 
 .allchats-embedded .view-head {
   display: none;
+}
+
+/* files view — rows shaped like Claude's own download cards */
+
+.files-hint {
+  font-size: 13px;
+  color: var(--text-muted);
+  margin: 0 0 12px;
+}
+
+.file-card {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  background: var(--bg-elev);
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  padding: 14px 16px;
+  transition: border-color 0.15s ease;
+}
+
+.file-card:hover {
+  border-color: var(--border-strong);
+}
+
+.file-card-icon {
+  flex-shrink: 0;
+  width: 46px;
+  height: 56px;
+  border: 1px solid var(--border-strong);
+  border-radius: 8px;
+  background: var(--bg-elev-2);
+  display: flex;
+  align-items: flex-end;
+  justify-content: center;
+  padding-bottom: 6px;
+}
+
+.file-ext {
+  font-size: 10px;
+  font-weight: 800;
+  letter-spacing: 0.04em;
+  padding: 1px 6px;
+  border-radius: 5px;
+  color: #fff;
+}
+
+.file-ext-pdf {
+  background: #d64545;
+}
+
+.file-ext-word {
+  background: #3567b8;
+}
+
+.file-ext-excel {
+  background: #2c8c58;
+}
+
+.file-ext-powerpoint {
+  background: #c46a1f;
+}
+
+.file-ext-file {
+  background: var(--text-faint);
+}
+
+.file-card-main {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.file-card-title {
+  font-weight: 650;
+  font-size: 15px;
+  letter-spacing: -0.01em;
+}
+
+.file-card-sub {
+  font-size: 12.5px;
+  color: var(--text-muted);
+}
+
+.file-card-convlink {
+  color: var(--accent-strong);
+  font-size: 12.5px;
+}
+
+.file-card-convlink:hover {
+  text-decoration: underline;
+}
+
+.file-card-status {
+  font-size: 12px;
+  color: var(--text-faint);
+}
+
+.file-card-actions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-shrink: 0;
+}
+
+.file-dl-btn {
+  padding: 8px 18px;
+  font-size: 13.5px;
+}
+
+/* files inside search results */
+
+.result-files {
+  border-bottom: 1px solid var(--border);
+  padding: 6px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.result-file {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 7px 10px;
+  border-radius: 10px;
+  background: var(--accent-soft);
+}
+
+.result-file-label {
+  font-size: 13.5px;
+  font-weight: 600;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.result-file-sub {
+  font-weight: 400;
+  font-size: 11.5px;
+  color: var(--text-muted);
+  margin-left: 6px;
+}
+
+.result-file-dl {
+  padding: 5px 14px;
+  font-size: 12.5px;
+  flex-shrink: 0;
 }
 
 /* documents shelf */

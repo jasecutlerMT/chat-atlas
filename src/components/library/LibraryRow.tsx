@@ -4,7 +4,7 @@ import { useMemo, useRef, useState } from 'react';
 import type { ConvMeta, OutputCard } from '../../types';
 import { OUTPUT_TYPE_LABELS } from '../../lib/classify';
 import { formatDate } from '../../lib/text';
-import { outputFullText, downloadText } from '../../lib/download';
+import { outputFullText } from '../../lib/download';
 import { useStore } from '../../state/store';
 import { ArrowRightIcon, CheckIcon, CopyIcon, DownloadIcon, PinIcon } from '../Icons';
 import { exportSingleCard } from './exporters';
@@ -173,7 +173,7 @@ function ExportMenu({ card }: { card: OutputCard }) {
               void exportSingleCard(card, visibleEntities, 'docx');
             }}
           >
-            Word document (.docx)
+            Word document
           </button>
           <button
             className="popover-item"
@@ -182,16 +182,7 @@ function ExportMenu({ card }: { card: OutputCard }) {
               void exportSingleCard(card, visibleEntities, 'pdf');
             }}
           >
-            PDF (via print)
-          </button>
-          <button
-            className="popover-item"
-            onClick={() => {
-              setOpen(false);
-              void outputFullText(card).then((t) => downloadText(card.title, t));
-            }}
-          >
-            Markdown (.md)
+            PDF
           </button>
         </div>
       )}

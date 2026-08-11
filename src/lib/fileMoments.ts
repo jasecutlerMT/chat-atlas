@@ -77,3 +77,26 @@ export function referencedFilenames(moments: FileMoment[]): string[] {
   for (const mo of moments) for (const f of mo.fileNames) names.add(f.toLowerCase());
   return [...names];
 }
+
+/** File extensions that count as documents worth keeping. */
+export const DOC_EXTENSIONS = /\.(pdf|docx?|xlsx?|pptx?|csv|rtf)$/i;
+
+/**
+ * Claude names downloads like "SydneyTechTargetList100.docx" while the chat
+ * says "Sydney tech target list 100" — so matching must ignore case, spaces
+ * and punctuation. This boils any name or title down to its comparable core.
+ */
+export function normalizeFileKey(nameOrTitle: string): string {
+  return nameOrTitle
+    .replace(/\.[a-z0-9]+$/i, '')
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '');
+}
+
+/** True when a downloaded file's name plausibly refers to the same thing as a title. */
+export function fileKeyMatches(fileName: string, title: string): boolean {
+  const a = normalizeFileKey(fileName);
+  const b = normalizeFileKey(title);
+  if (a.length < 6 || b.length < 6) return a === b && a.length > 0;
+  return a.includes(b) || b.includes(a);
+}

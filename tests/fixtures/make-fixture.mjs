@@ -209,6 +209,18 @@ export async function makeFixtures() {
         files: [],
       },
     ]),
+    // A file delivered like Claude's real download cards: the chat announces
+    // the files but the export carries no filename — the downloaded file
+    // ("SydneyTechTargetList100.docx") must still match by meaning.
+    conv(14, 'Sydney tech target list', '2026-06-28T09:00:00.000000Z', '2026-06-28T09:30:00.000000Z', [
+      msg('human', 'Build me a target list of Sydney tech companies. Give it to me as a PDF and a Word document.', '2026-06-28T09:00:00.000000Z'),
+      msg(
+        'assistant',
+        '# Sydney tech target list\n\n## Tier 1\n1. The companies with ANZ sales teams above twenty seats belong here, because their SDR motion is established and the hiring bar is documented.\n2. Prioritise the ones whose careers pages mention outbound explicitly.\n\n## Tier 2\n1. Series B and later with a first sales hire in the last year.\n2. Watch these quarterly; their needs change fast.\n\n## How to use this list\nWork ten names a week, top down, and record every touch in one place so the follow-up rhythm never depends on memory.',
+        '2026-06-28T09:05:00.000000Z',
+      ),
+      msg('assistant', 'Your files are ready to download above.', '2026-06-28T09:06:00.000000Z'),
+    ]),
     // Deliberately corrupted: no uuid — must be skipped with a readable reason.
     { name: 'Corrupted conversation', created_at: '2026-06-26T00:00:00.000000Z', updated_at: '2026-06-26T00:00:00.000000Z', chat_messages: [] },
   ];

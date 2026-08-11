@@ -4,6 +4,8 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useStore } from '../state/store';
 import { formatDate } from '../lib/text';
+import { normalizeFileKey } from '../lib/fileMoments';
+import { exportMoment } from './library/exporters';
 import { CloseIcon, PaperclipIcon, SearchIcon } from './Icons';
 
 export function SearchBar() {
@@ -19,6 +21,10 @@ export function SearchBar() {
     keywordChip,
     setKeywordChip,
     convMeta,
+    fileMoments,
+    storedFiles,
+    originalsByMoment,
+    downloadOriginal,
   } = useStore();
   const [showFilters, setShowFilters] = useState(false);
   const [focused, setFocused] = useState(false);
@@ -54,6 +60,45 @@ export function SearchBar() {
   }, []);
 
   const showResults = focused && query.trim().length > 0;
+
+  // Files whose name or conversation matches the query jump to the top —
+  // "find that file again" is the most common reason to search.
+  const fileHits = useMemo(() => {
+    const q = query.trim().toLowerCase();
+    if (q.length < 2) return [];
+    const qKey = normalizeFileKey(q);
+    const words = q.split(/\s+/).filter(Boolean);
+    const matches = (hay: string) =>
+      words.every((w) => hay.includes(w)) || (qKey.length >= 3 && normalizeFileKey(hay).includes(qKey));
+    const out: { key: string; label: string; sub: string; download: () => void }[] = [];
+    for (const m of fileMoments) {
+      const hay = `${m.fileNames.join(' ')} ${m.convName}`.toLowerCase();
+      if (!matches(hay)) continue;
+      const original = originalsByMoment.get(m.id);
+      out.push({
+        key: m.id,
+        label: (original?.name ?? m.fileNames[0] ?? m.convName).replace(/\.[a-z0-9]+$/i, ''),
+        sub: original ? 'exact saved file' : 'made fresh as Word',
+        download: () => {
+          if (original) void downloadOriginal(original.id);
+          else void exportMoment(m, 'docx');
+        },
+      });
+      if (out.length >= 3) return out;
+    }
+    for (const f of storedFiles) {
+      if (f.linkedMomentId) continue;
+      if (!matches(f.name.toLowerCase())) continue;
+      out.push({
+        key: f.id,
+        label: f.name,
+        sub: 'exact saved file',
+        download: () => void downloadOriginal(f.id),
+      });
+      if (out.length >= 3) break;
+    }
+    return out;
+  }, [query, fileMoments, storedFiles, originalsByMoment, downloadOriginal]);
 
   return (
     <div className="search-wrap" ref={boxRef}>
@@ -155,6 +200,20 @@ export function SearchBar() {
 
       {showResults && (
         <div className="results-panel" role="listbox" aria-label="Search results">
+          {fileHits.length > 0 && (
+            <div className="result-files">
+              {fileHits.map((f) => (
+                <div key={f.key} className="result-file" data-testid="search-file-hit">
+                  <span className="result-file-label">
+                    📄 {f.label} <span className="result-file-sub">{f.sub}</span>
+                  </span>
+                  <button className="primary-btn result-file-dl" onClick={f.download}>
+                    Download
+                  </button>
+                </div>
+              ))}
+            </div>
+          )}
           {hits.length === 0 ? (
             <div className="results-empty">
               <p>No matches yet. Typos are okay — but try a shorter or different word, or loosen the filters.</p>

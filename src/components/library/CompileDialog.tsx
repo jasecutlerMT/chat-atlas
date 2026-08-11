@@ -79,20 +79,6 @@ export function CompileDialog({
             className="secondary-btn"
             disabled={busy || order.length === 0}
             onClick={() => {
-              void (async () => {
-                setBusy(true);
-                await exportCompiled(await build(), 'md');
-                setBusy(false);
-                onClose();
-              })();
-            }}
-          >
-            Markdown
-          </button>
-          <button
-            className="secondary-btn"
-            disabled={busy || order.length === 0}
-            onClick={() => {
               exportCompiledPdf(build);
               onClose();
             }}

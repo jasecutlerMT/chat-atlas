@@ -49,7 +49,9 @@ import {
   putStoredFile,
   listStoredFiles,
   getStoredFileBlob,
+  deleteStoredFile as dbDeleteStoredFile,
 } from '../db/db';
+import { fileKeyMatches } from '../lib/fileMoments';
 import { FolderWatcher, browserSupportsWatching, type WatcherStatus } from '../adapters/folderWatch';
 import { SaveFolder, type SaveFolderStatus, type WritableDirHandle } from '../adapters/saveFolder';
 import { downloadBlob } from '../lib/download';
@@ -115,12 +117,13 @@ interface StoreValue {
   versionsOf: (groupId: string) => OutputCard[];
   prevImportAt: string | null;
 
-  // The Documents archive
+  // The Files archive
   fileMoments: FileMoment[];
   storedFiles: StoredFileMeta[];
   originalsByMoment: Map<string, StoredFileMeta>;
   attachOriginal: (moment: FileMoment, file: File) => Promise<void>;
   downloadOriginal: (id: string) => Promise<void>;
+  removeStoredFile: (id: string) => Promise<void>;
   saveFolderStatus: SaveFolderStatus;
   chooseSaveFolder: () => Promise<void>;
   resumeSaveFolder: () => Promise<void>;
@@ -184,10 +187,10 @@ export function StoreProvider({ children }: { children: ReactNode }) {
   const [entityOverrides, setEntityOverridesState] = useState<EntityOverrides>({ ...EMPTY_OVERRIDES });
   const [pins, setPinsState] = useState<LibraryItemRef[]>([]);
   const [collections, setCollectionsState] = useState<Collection[]>([]);
-  const [librarySel, setLibrarySel] = useState<LibrarySelection>({ kind: 'home' });
+  // Files are the thing Jason reaches for most, so the app opens onto them.
+  const [librarySel, setLibrarySel] = useState<LibrarySelection>({ kind: 'documents' });
   const [prevImportAt, setPrevImportAt] = useState<string | null>(null);
   const [fileMoments, setFileMoments] = useState<FileMoment[]>([]);
-  const [referencedFiles, setReferencedFiles] = useState<string[]>([]);
   const [storedFiles, setStoredFiles] = useState<StoredFileMeta[]>([]);
   const [saveFolderStatus, setSaveFolderStatus] = useState<SaveFolderStatus>({ state: 'off' });
   const [updateInfo, setUpdateInfo] = useState<{ local: number; remote: number | null } | null>(null);
@@ -213,6 +216,8 @@ export function StoreProvider({ children }: { children: ReactNode }) {
   const watcherRef = useRef<FolderWatcher | null>(null);
   const saveFolderRef = useRef<SaveFolder | null>(null);
   const momentsRef = useRef<FileMoment[]>([]);
+  const convMetaRef = useRef<ConvMeta[]>([]);
+  const outputsRef = useRef<OutputCard[]>([]);
   const importQueue = useRef<Promise<void>>(Promise.resolve());
   const pendingImports = useRef<Map<string, (s: ImportSummary) => void>>(new Map());
   const latestSearchId = useRef(0);
@@ -250,7 +255,8 @@ export function StoreProvider({ children }: { children: ReactNode }) {
       setEntities(bundle.entities ?? []);
       setFileMoments(bundle.fileMoments ?? []);
       momentsRef.current = bundle.fileMoments ?? [];
-      setReferencedFiles(bundle.referencedFiles ?? []);
+      convMetaRef.current = bundle.convMeta;
+      outputsRef.current = bundle.outputs;
       // Data imported by an older version of the app: derive the new
       // organisation (entities, versions, better titles) from what's already
       // stored — no re-import needed.
@@ -636,11 +642,23 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     return map;
   }, [storedFiles]);
 
-  /** A doc file from the watched folder whose name Claude's chats mention: keep it forever. */
+  /**
+   * Any document file that lands in the watched folder gets kept forever and
+   * matched to its conversation — by exact name first, then by comparing the
+   * file's name to conversation, document and file-card titles ("Sydney tech
+   * target list 100" ≈ SydneyTechTargetList100.docx).
+   */
   const captureDocFile = useCallback(
     async (file: File): Promise<boolean> => {
       const lower = file.name.toLowerCase();
-      const moment = momentsRef.current.find((m) => m.fileNames.some((n) => n.toLowerCase() === lower));
+      let moment = momentsRef.current.find((m) => m.fileNames.some((n) => n.toLowerCase() === lower));
+      if (!moment) moment = momentsRef.current.find((m) => m.fileNames.some((n) => fileKeyMatches(file.name, n)));
+      if (!moment) moment = momentsRef.current.find((m) => fileKeyMatches(file.name, m.convName));
+      let linkedConvId = moment?.convId;
+      if (!linkedConvId) {
+        const output = outputsRef.current.find((o) => fileKeyMatches(file.name, o.title));
+        linkedConvId = output?.convId ?? convMetaRef.current.find((c) => fileKeyMatches(file.name, c.name))?.uuid;
+      }
       const meta: StoredFileMeta = {
         id: fileArchiveId(file.name, file.size, file.lastModified),
         name: file.name,
@@ -649,11 +667,11 @@ export function StoreProvider({ children }: { children: ReactNode }) {
         capturedAt: new Date().toISOString(),
         source: 'watched',
         linkedMomentId: moment?.id,
-        linkedConvId: moment?.convId,
+        linkedConvId,
       };
       await putStoredFile(meta, file);
       setStoredFiles(await listStoredFiles());
-      pushToast(`Kept the original file “${file.name}” — it's yours forever now.`, 'success');
+      pushToast(`Saved “${file.name}” — find it any time under Files.`, 'success');
       const sf = saveFolderRef.current;
       if (sf && (await sf.ready())) void sf.writeFile(file.name, file);
       return true;
@@ -689,6 +707,15 @@ export function StoreProvider({ children }: { children: ReactNode }) {
       if (blob && meta) downloadBlob(blob, meta.name);
     },
     [storedFiles],
+  );
+
+  const removeStoredFile = useCallback(
+    async (id: string) => {
+      await dbDeleteStoredFile(id);
+      setStoredFiles(await listStoredFiles());
+      pushToast('Removed from Chat Atlas. (The file itself, wherever it lives, is untouched.)', 'info');
+    },
+    [pushToast],
   );
 
   const chooseSaveFolder = useCallback(async () => {
@@ -816,10 +843,10 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // Keep the watcher's capture list current, and restore the save folder once.
+  // Keep the watcher's capture handler current, and restore the save folder once.
   useEffect(() => {
-    watcherRef.current?.setDocCapture(captureDocFile, referencedFiles);
-  }, [captureDocFile, referencedFiles]);
+    watcherRef.current?.setDocCapture(captureDocFile);
+  }, [captureDocFile]);
 
   useEffect(() => {
     const sf = new SaveFolder((s) => setSaveFolderStatus(s));
@@ -905,6 +932,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     originalsByMoment,
     attachOriginal,
     downloadOriginal,
+    removeStoredFile,
     saveFolderStatus,
     chooseSaveFolder,
     resumeSaveFolder,

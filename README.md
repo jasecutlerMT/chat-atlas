@@ -54,31 +54,37 @@ seconds, unpacked, merged in (never duplicated), and announced with a little
 "5 new conversations, 3 updated" message. Prefer to do it by hand? Drag the
 zip anywhere onto the window, any time.
 
-## Documents & files: never lose a file Claude made again
+## Your files: never lose a file Claude made again
+
+The app opens onto **Your files** — every PDF and Word document from your
+history, shown like the download cards in Claude's own chat: a name, a file
+type, a **Download** button.
 
 An honest fact first: Claude's data export contains the *words* of what
 Claude made for you, but never the actual PDF or Word file — those bytes
-only ever exist on Anthropic's servers and, briefly, in your Downloads
-folder when you click download. Chat Atlas works with that reality:
+only ever exist on Anthropic's servers and, briefly, in the folder you
+download into. Chat Atlas works with that reality:
 
-- **Going forward, you keep the exact file automatically.** Chat Atlas
-  already watches your Downloads folder; it knows the filenames your chats
-  mention, so the moment you download a file Claude made, a permanent
-  private copy is kept and filed against the right conversation. Delete the
-  download, empty the bin — the original stays yours, re-downloadable
-  forever from the **Documents & files** shelf.
-- **Every file-moment in your history is listed** on that shelf — each time
-  you asked for a PDF/Word file or Claude produced one — with an
-  **"I asked for a file"** filter. Rows with the real file show
-  **Original kept ✓**; every row can be rebuilt as a fresh Word document,
-  PDF or markdown from the captured words.
-- **Old files from before Chat Atlas existed** can't be conjured back, but
-  if the file still exists anywhere on your Mac, the paperclip button on its
-  row attaches it — kept permanently from then on.
+- **Going forward, you keep the exact file automatically.** Point Chat
+  Atlas at the folder your Claude downloads land in, and every document
+  that arrives there is saved permanently and matched to its conversation —
+  even though Claude names files like `SydneyTechTargetList100.docx` while
+  the chat says "Sydney tech target list 100"; the matching understands
+  that. Delete the download, empty the bin — your copy stays, marked
+  **"✓ This is the exact file you downloaded from Claude."**
+- **When the file itself wasn't saved** (anything from before Chat Atlas
+  existed), the row says so plainly and its Download button makes a fresh
+  Word file — or PDF — from the conversation's content. If the old file
+  still exists somewhere on your Mac, the paperclip button attaches it,
+  kept for good.
+- **Search finds files first.** Type a few letters of the name and the file
+  appears at the top of the results with its own Download button.
 - **Auto-save folder**: pick a folder once (say "Chat Atlas Documents") and
-  new documents are also written there as real files — originals as
-  captured, rebuilt Word files otherwise. "Save all now" writes the whole
-  shelf in one go.
+  copies of everything here are also written into it as real files, with a
+  "Copy all there now" button for the backlog.
+
+Everything downloads as **Word or PDF** — nowhere in the app will you be
+handed a .md file.
 
 ## How your library is organised
 

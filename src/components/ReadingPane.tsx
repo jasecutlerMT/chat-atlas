@@ -6,7 +6,7 @@ import type { Conversation } from '../types';
 import { getConversation } from '../db/db';
 import { useStore } from '../state/store';
 import { formatDate, formatDateTime } from '../lib/text';
-import { downloadText } from '../lib/download';
+import { downloadBlob, safeFilename } from '../lib/download';
 import { CopyButton, Markdown } from './Markdown';
 import { CloseIcon, DownloadIcon, PaperclipIcon, PinIcon } from './Icons';
 
@@ -97,11 +97,30 @@ export function ReadingPane() {
                 </button>
                 <button
                   className="ghost-btn"
-                  title="Save this conversation as a markdown file"
-                  onClick={() => downloadText(conv.name, conversationToMarkdown(conv))}
+                  title="Save this whole conversation as a Word document"
+                  onClick={() => {
+                    void (async () => {
+                      const { renderDocxBlob } = await import('../lib/renderDocx');
+                      const blob = await renderDocxBlob({
+                        title: conv.name,
+                        createdAt: new Date().toISOString(),
+                        sections: [
+                          {
+                            title: conv.name,
+                            typeLabel: 'Conversation',
+                            date: formatDate(conv.created_at),
+                            sourceConv: conv.name,
+                            entityLabels: [],
+                            markdown: conversationToMarkdown(conv),
+                          },
+                        ],
+                      });
+                      downloadBlob(blob, safeFilename(conv.name, '.docx'));
+                    })();
+                  }}
                 >
                   <DownloadIcon size={15} />
-                  <span>Save as file</span>
+                  <span>Save as Word file</span>
                 </button>
                 <button className="icon-btn" aria-label="Close reader" onClick={closeReading}>
                   <CloseIcon size={17} />

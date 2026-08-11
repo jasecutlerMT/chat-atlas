@@ -28,12 +28,14 @@ test.afterAll(async () => {
   await context?.close();
 });
 
-test('first import lands on the Library with type counts', async () => {
+test('first import lands on Your files, with the library one click away', async () => {
   await expect(page.getByText('Welcome to Chat Atlas')).toBeVisible({ timeout: 15_000 });
   await page.setInputFiles('[data-testid="file-input"]', join(TMP, 'sample.zip'));
   await expect(page.locator('.toast').first()).toContainText('new conversation', { timeout: 30_000 });
   await expect(page.locator('.tab-on')).toHaveText('Library');
-  await expect(page.locator('.lib-sidebar')).toBeVisible();
+  await expect(page.locator('.lib-head h1')).toHaveText('Your files');
+  await expect(page.locator('[data-testid="file-card"]').first()).toBeVisible();
+  await page.locator('.side-item', { hasText: 'Overview' }).click();
   await expect(page.locator('.side-item', { hasText: 'Research brief' })).toBeVisible();
   await expect(page.locator('.side-item', { hasText: 'Email or message draft' })).toBeVisible();
   await expect(page.locator('.lib-row').first()).toBeVisible();
@@ -266,23 +268,24 @@ test('old stored data is upgraded in place (no re-import needed)', async () => {
   await expect(page.locator('.side-entity', { hasText: 'Acme Logistics' })).toBeVisible({ timeout: 30_000 });
 });
 
-test('the Documents shelf lists file-moments and rebuilds a Word file', async () => {
-  await page.locator('.side-item', { hasText: 'Documents & files' }).click();
-  const row = page.locator('[data-testid="doc-row"]', { hasText: 'acme-logistics-brief.docx' });
+test('Your files lists every file and Download makes a real Word file', async () => {
+  await page.locator('.side-item', { hasText: 'Your files' }).click();
+  const row = page.locator('[data-testid="file-card"]', { hasText: 'Acme Logistics Brief' });
   await expect(row).toBeVisible();
-  await expect(row.locator('.badge-askedfile')).toBeVisible();
-  // Filter to explicit file requests.
-  await page.locator('.chip', { hasText: 'I asked for a file' }).click();
-  await expect(page.locator('[data-testid="doc-row"]', { hasText: 'acme-logistics-brief.docx' })).toBeVisible();
-  await page.locator('.chip', { hasText: 'All documents' }).click();
-  // Rebuild as Word: the content behind the file, verified inside the .docx.
-  await row.locator('button[title*="Rebuild"]').click();
+  await expect(row.locator('.file-card-status')).toContainText('makes a fresh copy');
+  // The Word filter keeps it visible; the Download button makes a real .docx.
+  await page.locator('.chip', { hasText: /^Word$/ }).click();
+  await expect(page.locator('[data-testid="file-card"]', { hasText: 'Acme Logistics Brief' })).toBeVisible();
+  await page.locator('.chip', { hasText: /^All/ }).click();
   const downloadPromise = page.waitForEvent('download');
-  await page.locator('.popover-item', { hasText: 'Word document' }).click();
+  await row.locator('.file-dl-btn').click();
   const download = await downloadPromise;
   const zip = await JSZip.loadAsync(readFileSync(await download.path()));
   const docXml = await zip.file('word/document.xml').async('string');
   expect(docXml).toContain('Acme Logistics');
+  expect(download.suggestedFilename()).toMatch(/\.docx$/);
+  // Markdown is gone from the interface.
+  expect(await page.getByText('Markdown').count()).toBe(0);
 });
 
 test('the exact original file is caught from the watched folder and kept', async () => {
@@ -300,34 +303,66 @@ test('the exact original file is caught from the watched folder and kept', async
     };
     window.__atlasTest.injectDirHandle(fakeHandle);
   }, ORIGINAL_BYTES);
-  await expect(page.locator('.toast', { hasText: 'Kept the original' })).toBeVisible({ timeout: 20_000 });
+  await expect(page.locator('.toast', { hasText: 'Saved “acme-logistics-brief.docx”' })).toBeVisible({ timeout: 20_000 });
 
-  const row = page.locator('[data-testid="doc-row"]', { hasText: 'acme-logistics-brief.docx' });
-  await expect(row.locator('.badge-originalkept')).toBeVisible();
+  const row = page.locator('[data-testid="file-card"]', { hasText: 'Acme Logistics Brief' });
+  await expect(row.locator('.file-card-status')).toContainText('exact file');
   const downloadPromise = page.waitForEvent('download');
-  await row.locator('.doc-original-btn').click();
+  await row.locator('.file-dl-btn').click();
   const download = await downloadPromise;
   expect(readFileSync(await download.path(), 'utf8')).toBe(ORIGINAL_BYTES);
 
-  // The kept original survives a restart.
+  // The saved file survives a restart.
   await page.reload();
-  await page.locator('.side-item', { hasText: 'Documents & files' }).click();
+  await expect(page.locator('.lib-head h1')).toHaveText('Your files', { timeout: 20_000 });
   await expect(
-    page.locator('[data-testid="doc-row"]', { hasText: 'acme-logistics-brief.docx' }).locator('.badge-originalkept'),
-  ).toBeVisible({ timeout: 15_000 });
+    page.locator('[data-testid="file-card"]', { hasText: 'Acme Logistics Brief' }).locator('.file-card-status'),
+  ).toContainText('exact file', { timeout: 15_000 });
+});
+
+test('a file named like Claude names downloads still finds its conversation', async () => {
+  // "Sydney tech target list" chat; downloaded file "SydneyTechTargetList100.docx".
+  await page.evaluate(() => {
+    const file = new File(['SYDNEY-LIST-ORIGINAL-BYTES'], 'SydneyTechTargetList100.docx', { lastModified: Date.now() });
+    const fakeHandle = {
+      name: 'Downloads (test)',
+      kind: 'directory',
+      async *values() {
+        yield { kind: 'file', name: file.name, getFile: async () => file };
+      },
+      queryPermission: async () => 'granted',
+      requestPermission: async () => 'granted',
+    };
+    window.__atlasTest.injectDirHandle(fakeHandle);
+  });
+  await expect(page.locator('.toast', { hasText: 'SydneyTechTargetList100.docx' })).toBeVisible({ timeout: 20_000 });
+  const row = page.locator('[data-testid="file-card"]', { hasText: 'Sydney Tech Target List 100' });
+  await expect(row).toBeVisible();
+  await expect(row.locator('.file-card-sub')).toContainText('Sydney tech target list');
+  await expect(row.locator('.file-card-status')).toContainText('exact file');
+
+  // Searching finds the file first, with a working Download button.
+  await page.fill('.search-bar input', 'sydney');
+  const hit = page.locator('[data-testid="search-file-hit"]', { hasText: 'Sydney' }).first();
+  await expect(hit).toBeVisible({ timeout: 10_000 });
+  const downloadPromise = page.waitForEvent('download');
+  await hit.locator('.result-file-dl').click();
+  expect(readFileSync(await (await downloadPromise).path(), 'utf8')).toBe('SYDNEY-LIST-ORIGINAL-BYTES');
+  await page.fill('.search-bar input', '');
+  await page.keyboard.press('Escape');
 });
 
 test('an original can be attached by hand to an old file-moment', async () => {
-  const row = page.locator('[data-testid="doc-row"]', { hasText: 'northwind-negotiation-plan.pdf' });
+  const row = page.locator('[data-testid="file-card"]', { hasText: 'Northwind Negotiation Plan' });
   await expect(row).toBeVisible();
-  await expect(row.locator('.badge-rebuild')).toBeVisible();
+  await expect(row.locator('.file-card-status')).toContainText('makes a fresh copy');
   const tmpFile = join(TMP, 'northwind-negotiation-plan.pdf');
   const { writeFileSync } = await import('node:fs');
   writeFileSync(tmpFile, 'HAND-ATTACHED-ORIGINAL-PDF');
   await row.locator('[data-testid="attach-original"]').setInputFiles(tmpFile);
-  await expect(row.locator('.badge-originalkept')).toBeVisible();
+  await expect(row.locator('.file-card-status')).toContainText('exact file');
   const downloadPromise = page.waitForEvent('download');
-  await row.locator('.doc-original-btn').click();
+  await row.locator('.file-dl-btn').click();
   expect(readFileSync(await (await downloadPromise).path(), 'utf8')).toBe('HAND-ATTACHED-ORIGINAL-PDF');
 });
 
@@ -350,8 +385,8 @@ test('the auto-save folder receives real files', async () => {
     window.__atlasTest.injectSaveHandle(mock);
   });
   await expect(page.locator('.savefolder-bar', { hasText: 'Chat Atlas Documents (test)' })).toBeVisible();
-  await page.locator('.savefolder-bar .ghost-btn', { hasText: 'Save all now' }).click();
-  await expect(page.locator('.toast', { hasText: 'Saved' })).toBeVisible({ timeout: 30_000 });
+  await page.locator('.savefolder-bar .ghost-btn', { hasText: 'Copy all there now' }).click();
+  await expect(page.locator('.toast', { hasText: 'to the folder' })).toBeVisible({ timeout: 30_000 });
   const saves = await page.evaluate(() => window.__saves);
   expect(saves.length).toBeGreaterThanOrEqual(2); // kept originals + rebuilt docx
   expect(saves.some((s) => s.name === 'acme-logistics-brief.docx')).toBe(true);
@@ -394,6 +429,7 @@ test('a big export imports without freezing the app', async () => {
   await expect(p2.locator('.toast').first()).toContainText('250 new conversations', { timeout: 90_000 });
   const elapsed = (Date.now() - start) / 1000;
   expect(elapsed).toBeLessThan(60);
+  await p2.locator('.side-item', { hasText: 'Overview' }).click();
   await expect(p2.locator('.lib-row').first()).toBeVisible({ timeout: 15_000 });
   await fresh.close();
 });

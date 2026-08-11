@@ -46,19 +46,16 @@ export class FolderWatcher {
   private scanning = false;
   private onZip: (file: File) => Promise<boolean>;
   private onStatus: (s: WatcherStatus) => void;
-  /** Called for doc files (pdf/docx/…) whose names Claude's chats mention — the original-capture path. */
+  /** Called for every document file (pdf/docx/…) seen in the folder; the store decides what to keep. */
   private onDocFile: ((file: File) => Promise<boolean>) | null = null;
-  /** Lowercased filenames worth capturing; refreshed by the store after every import. */
-  private wantedNames = new Set<string>();
 
   constructor(onZip: (file: File) => Promise<boolean>, onStatus: (s: WatcherStatus) => void) {
     this.onZip = onZip;
     this.onStatus = onStatus;
   }
 
-  setDocCapture(onDocFile: (file: File) => Promise<boolean>, wantedNames: string[]): void {
+  setDocCapture(onDocFile: (file: File) => Promise<boolean>): void {
     this.onDocFile = onDocFile;
-    this.wantedNames = new Set(wantedNames.map((n) => n.toLowerCase()));
   }
 
   /** Try to resume watching from a previously saved folder handle. */
@@ -146,7 +143,7 @@ export class FolderWatcher {
       for await (const entry of this.handle.values()) {
         if (entry.kind !== 'file') continue;
         const isZip = /\.zip$/i.test(entry.name);
-        const isWantedDoc = this.onDocFile && this.wantedNames.has(entry.name.toLowerCase());
+        const isWantedDoc = this.onDocFile && /\.(pdf|docx?|xlsx?|pptx?|csv|rtf)$/i.test(entry.name);
         if (!isZip && !isWantedDoc) continue;
         try {
           const file = await entry.getFile();

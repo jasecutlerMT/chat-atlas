@@ -8,8 +8,20 @@ import { OUTPUT_TYPE_LABELS } from '../../lib/classify';
 const TYPE_ORDER: OutputType[] = ['research', 'email', 'plan', 'script', 'document', 'code'];
 
 export function LibrarySidebar({ newCount }: { newCount: number }) {
-  const { librarySel, setLibrarySel, groupedOutputs, scopedConvs, visibleEntities, collections, pins, createCollection, fileMoments, originalsByMoment } =
-    useStore();
+  const {
+    librarySel,
+    setLibrarySel,
+    groupedOutputs,
+    scopedConvs,
+    visibleEntities,
+    collections,
+    pins,
+    createCollection,
+    fileMoments,
+    storedFiles,
+    originalsByMoment,
+  } = useStore();
+  const fileCount = fileMoments.length + storedFiles.filter((f) => !f.linkedMomentId).length;
   const [showAllEntities, setShowAllEntities] = useState(false);
   const [newCol, setNewCol] = useState('');
   const [addingCol, setAddingCol] = useState(false);
@@ -39,6 +51,12 @@ export function LibrarySidebar({ newCount }: { newCount: number }) {
 
   return (
     <nav className="lib-sidebar" aria-label="Library">
+      <button className={`side-item side-item-strong ${is('documents') ? 'side-on' : ''}`} onClick={() => setLibrarySel({ kind: 'documents' })}>
+        Your files{' '}
+        <span className="side-count" title={`${originalsByMoment.size} saved as the exact file`}>
+          {fileCount}
+        </span>
+      </button>
       <button className={`side-item ${is('home') ? 'side-on' : ''}`} onClick={() => setLibrarySel({ kind: 'home' })}>
         Overview
       </button>
@@ -47,12 +65,6 @@ export function LibrarySidebar({ newCount }: { newCount: number }) {
       </button>
       <button className={`side-item ${is('recent') ? 'side-on' : ''}`} onClick={() => setLibrarySel({ kind: 'recent' })}>
         What’s new {newCount > 0 && <span className="side-count side-count-hot">{newCount}</span>}
-      </button>
-      <button className={`side-item ${is('documents') ? 'side-on' : ''}`} onClick={() => setLibrarySel({ kind: 'documents' })}>
-        Documents & files{' '}
-        <span className="side-count" title={`${originalsByMoment.size} with the original kept`}>
-          {fileMoments.length}
-        </span>
       </button>
 
       <p className="side-head">By type</p>
