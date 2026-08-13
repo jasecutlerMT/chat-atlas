@@ -117,8 +117,14 @@ export function TopBar({
         )}
 
         {watcherStatus.state === 'watching' && (
-          <span className="watch-chip watch-on" title={`Checking “${watcherStatus.folderName}” for new exports every 30 seconds`}>
-            <span className="watch-dot" /> Watching {watcherStatus.folderName}
+          <span
+            className="watch-chip watch-on"
+            title={`Checking ${watcherStatus.folders.map((f) => `“${f.name}”`).join(', ')} every 30 seconds`}
+          >
+            <span className="watch-dot" />{' '}
+            {watcherStatus.folders.length === 1
+              ? `Watching ${watcherStatus.folders[0].name}`
+              : `Watching ${watcherStatus.folders.length} folders`}
           </span>
         )}
         {watcherStatus.state === 'needs-permission' && (

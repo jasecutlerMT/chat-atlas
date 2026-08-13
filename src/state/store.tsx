@@ -50,12 +50,20 @@ import {
   listStoredFiles,
   getStoredFileBlob,
   deleteStoredFile as dbDeleteStoredFile,
+  updateStoredFileMeta,
 } from '../db/db';
-import { fileKeyMatches } from '../lib/fileMoments';
-import { FolderWatcher, browserSupportsWatching, type WatcherStatus } from '../adapters/folderWatch';
+import {
+  FolderWatcher,
+  browserSupportsWatching,
+  type DocContext,
+  type DocResult,
+  type WatcherStatus,
+} from '../adapters/folderWatch';
 import { SaveFolder, type SaveFolderStatus, type WritableDirHandle } from '../adapters/saveFolder';
 import { downloadBlob } from '../lib/download';
 import type { FileMoment, StoredFileMeta } from '../types';
+import { identifyFile, IDENTITY_VERSION } from '../lib/fileIdentity';
+import { matchFile, type MatchSources } from '../lib/fileMatch';
 
 export type Scope = { kind: 'all' } | { kind: 'project'; uuid: string; name: string } | { kind: 'workspace'; id: string; name: string };
 
@@ -69,6 +77,13 @@ export interface ReadingTarget {
   convId: string;
   msgId?: string;
 }
+
+/**
+ * Filenames that usually mean private paperwork. Chat Atlas exists to keep
+ * Claude's documents, not to hoover up a person's bank statements, so these
+ * are left alone unless the user adds them deliberately.
+ */
+const PRIVATE_LOOKING = /(statement|invoice|receipt|payslip|payslips|tax|bank|passport|licence|license|medicare|contract|insurance)/i;
 
 /** Which knowledge source the Library is showing. Lives in the store so search results and row actions can navigate. */
 export type LibrarySelection =
@@ -124,6 +139,14 @@ interface StoreValue {
   attachOriginal: (moment: FileMoment, file: File) => Promise<void>;
   downloadOriginal: (id: string) => Promise<void>;
   removeStoredFile: (id: string) => Promise<void>;
+  /** Add files the user picked or dropped; returns what happened to them. */
+  addFilesByHand: (files: File[], ctx: DocContext) => Promise<{ kept: number; ignored: number }>;
+  linkFileToConversation: (fileId: string, convId: string) => Promise<void>;
+  keepReviewedFile: (fileId: string) => Promise<void>;
+  rescanFolders: () => Promise<void>;
+  addWatchFolder: () => Promise<void>;
+  scanFolderOnce: () => Promise<void>;
+  backfillProgress: { done: number; total: number } | null;
   saveFolderStatus: SaveFolderStatus;
   chooseSaveFolder: () => Promise<void>;
   resumeSaveFolder: () => Promise<void>;
@@ -195,6 +218,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
   const [saveFolderStatus, setSaveFolderStatus] = useState<SaveFolderStatus>({ state: 'off' });
   const [updateInfo, setUpdateInfo] = useState<{ local: number; remote: number | null } | null>(null);
   const [updating, setUpdating] = useState(false);
+  const [backfillProgress, setBackfillProgress] = useState<{ done: number; total: number } | null>(null);
   const [skipped, setSkipped] = useState<SkippedItem[]>([]);
   const [workspaces, setWorkspacesState] = useState<Workspace[]>([]);
   const [scope, setScopeState] = useState<Scope>({ kind: 'all' });
@@ -218,6 +242,9 @@ export function StoreProvider({ children }: { children: ReactNode }) {
   const momentsRef = useRef<FileMoment[]>([]);
   const convMetaRef = useRef<ConvMeta[]>([]);
   const outputsRef = useRef<OutputCard[]>([]);
+  const storedFilesRef = useRef<StoredFileMeta[]>([]);
+  /** Everything the file matcher needs, kept current so the capture callback never changes identity. */
+  const matchSourcesRef = useRef<MatchSources>({ moments: [], outputs: [], convs: [], msgStamps: [] });
   const importQueue = useRef<Promise<void>>(Promise.resolve());
   const pendingImports = useRef<Map<string, (s: ImportSummary) => void>>(new Map());
   const latestSearchId = useRef(0);
@@ -257,6 +284,12 @@ export function StoreProvider({ children }: { children: ReactNode }) {
       momentsRef.current = bundle.fileMoments ?? [];
       convMetaRef.current = bundle.convMeta;
       outputsRef.current = bundle.outputs;
+      matchSourcesRef.current = {
+        moments: bundle.fileMoments ?? [],
+        outputs: bundle.outputs,
+        convs: bundle.convMeta,
+        msgStamps: bundle.msgStamps ?? [],
+      };
       // Data imported by an older version of the app: derive the new
       // organisation (entities, versions, better titles) from what's already
       // stored — no re-import needed.
@@ -271,7 +304,9 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     setPinsState(pn);
     setCollectionsState(cols);
     setEntityOverridesState(ov);
-    setStoredFiles(await listStoredFiles());
+    const files = await listStoredFiles();
+    storedFilesRef.current = files;
+    setStoredFiles(files);
 
     // First run with data: default the scope to a project or workspace named
     // "Career" if one exists, as requested.
@@ -366,35 +401,67 @@ export function StoreProvider({ children }: { children: ReactNode }) {
   );
 
   // ---- folder watcher ----
+  // Both callbacks are wired at construction through refs, so the watcher can
+  // never run a scan before its handlers exist, and it is never torn down and
+  // rebuilt when an unrelated callback's identity changes.
+  const importOneRef = useRef(importOne);
+  importOneRef.current = importOne;
+  const captureRef = useRef<(f: File, ctx: DocContext) => Promise<DocResult>>(async () => 'ignored');
+
   useEffect(() => {
-    const watcher = new FolderWatcher(
-      async (file) => {
-        const summary = await importOne(file);
+    const watcher = new FolderWatcher({
+      onZip: async (file) => {
+        const summary = await importOneRef.current(file);
         // Mark as processed even when unreadable, so a bad zip is not retried forever.
         return summary !== null;
       },
-      (s) => setWatcherStatus(s),
-    );
+      onDocFile: (file, ctx) => captureRef.current(file, ctx),
+      onStatus: (s) => setWatcherStatus(s),
+    });
     watcherRef.current = watcher;
     void watcher.restore();
     if (import.meta.env.DEV) {
-      // Automated-test hook: lets tests drive the watcher with a fake folder.
-      (window as unknown as Record<string, unknown>).__atlasTest = {
-        injectDirHandle: (h: unknown) => watcher.setHandleForTesting(h as never),
-        scanNow: () => watcher.scan(),
-      };
+      // Automated-test hooks: drive the watcher with a stand-in folder.
+      const hooks = ((window as unknown as Record<string, unknown>).__atlasTest ?? {}) as Record<string, unknown>;
+      hooks.injectDirHandle = (h: unknown) => watcher.setHandleForTesting(h as never);
+      hooks.scanNow = () => watcher.scan();
+      (window as unknown as Record<string, unknown>).__atlasTest = hooks;
     }
     return () => watcher.stop();
-  }, [importOne]);
+  }, []);
 
   const chooseFolder = useCallback(async () => {
-    const ok = await watcherRef.current?.pickFolder();
-    if (ok) pushToast('Watching your folder — new exports will appear here automatically.', 'success');
+    const ok = await watcherRef.current?.addFolder();
+    if (ok) pushToast('Watching that folder — files you download from Claude will appear here by themselves.', 'success');
   }, [pushToast]);
 
+  const addWatchFolder = chooseFolder;
+
   const resumeWatching = useCallback(async () => {
-    const ok = await watcherRef.current?.resume();
-    if (ok) pushToast('Watching resumed.', 'success');
+    const granted = (await watcherRef.current?.resume()) ?? 0;
+    if (granted > 0) pushToast('Watching again — looking for anything downloaded since.', 'success');
+  }, [pushToast]);
+
+  const rescanFolders = useCallback(async () => {
+    const w = watcherRef.current;
+    if (!w) return;
+    await w.clearSeenDocs();
+    const { looked, kept } = await w.scan();
+    pushToast(
+      kept > 0
+        ? `Looked at ${looked} file${looked === 1 ? '' : 's'} and saved ${kept} new one${kept === 1 ? '' : 's'}.`
+        : `Looked at ${looked} file${looked === 1 ? '' : 's'} — nothing new from Claude.`,
+      kept > 0 ? 'success' : 'info',
+    );
+  }, [pushToast]);
+
+  const scanFolderOnce = useCallback(async () => {
+    const result = await watcherRef.current?.scanFolderOnce();
+    if (!result) return;
+    pushToast(
+      `Looked at ${result.looked} file${result.looked === 1 ? '' : 's'}, kept ${result.kept} that Claude made.`,
+      result.kept > 0 ? 'success' : 'info',
+    );
   }, [pushToast]);
 
   // ---- scope ----
@@ -642,63 +709,170 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     return map;
   }, [storedFiles]);
 
-  /**
-   * Any document file that lands in the watched folder gets kept forever and
-   * matched to its conversation — by exact name first, then by comparing the
-   * file's name to conversation, document and file-card titles ("Sydney tech
-   * target list 100" ≈ SydneyTechTargetList100.docx).
-   */
-  const captureDocFile = useCallback(
-    async (file: File): Promise<boolean> => {
-      const lower = file.name.toLowerCase();
-      let moment = momentsRef.current.find((m) => m.fileNames.some((n) => n.toLowerCase() === lower));
-      if (!moment) moment = momentsRef.current.find((m) => m.fileNames.some((n) => fileKeyMatches(file.name, n)));
-      if (!moment) moment = momentsRef.current.find((m) => fileKeyMatches(file.name, m.convName));
-      let linkedConvId = moment?.convId;
-      if (!linkedConvId) {
-        const output = outputsRef.current.find((o) => fileKeyMatches(file.name, o.title));
-        linkedConvId = output?.convId ?? convMetaRef.current.find((c) => fileKeyMatches(file.name, c.name))?.uuid;
-      }
-      const meta: StoredFileMeta = {
-        id: fileArchiveId(file.name, file.size, file.lastModified),
-        name: file.name,
-        size: file.size,
-        lastModified: file.lastModified,
-        capturedAt: new Date().toISOString(),
-        source: 'watched',
-        linkedMomentId: moment?.id,
-        linkedConvId,
-      };
-      await putStoredFile(meta, file);
-      setStoredFiles(await listStoredFiles());
-      pushToast(`Saved “${file.name}” — find it any time under Files.`, 'success');
-      const sf = saveFolderRef.current;
-      if (sf && (await sf.ready())) void sf.writeFile(file.name, file);
-      return true;
+  /** A folder sweep can find several files at once; they are announced together. */
+  const captureBatch = useRef<{ names: string[]; timer: ReturnType<typeof setTimeout> | null }>({ names: [], timer: null });
+  const announceCapture = useCallback(
+    (name: string) => {
+      const batch = captureBatch.current;
+      batch.names.push(name);
+      if (batch.timer) clearTimeout(batch.timer);
+      batch.timer = setTimeout(() => {
+        const names = batch.names;
+        batch.names = [];
+        batch.timer = null;
+        pushToast(
+          names.length === 1
+            ? `Saved “${names[0]}” — find it any time under Your files.`
+            : `Saved ${names.length} files from Claude — find them under Your files.`,
+          'success',
+        );
+      }, 1200);
     },
     [pushToast],
   );
 
-  const attachOriginal = useCallback(
-    async (moment: FileMoment, file: File) => {
+  /**
+   * Decide what to do with one document file, then keep it or ignore it.
+   *
+   * Kept only when the file is recognisably one of Claude's (it says so
+   * inside — see lib/fileIdentity.ts) or it clearly belongs to one of the
+   * conversations. Everything else is ignored silently: no toast, nothing
+   * stored. `force` is set when the user added the file themselves, which
+   * overrides every rule — their explicit choice always wins.
+   */
+  const captureDocFile = useCallback(
+    async (file: File, ctx: DocContext): Promise<DocResult> => {
+      const id = await identifyFile(file, file.name);
+      const match = matchFile(file.name, id, matchSourcesRef.current);
+
+      const looksPrivate = PRIVATE_LOOKING.test(file.name) && !id.isClaudeMade && match.confidence < 0.85;
+      const keep = ctx.force || (!looksPrivate && (id.isClaudeMade || match.how !== 'none'));
+      if (!keep) return 'ignored';
+
+      const fileId = fileArchiveId(file.name, file.size, file.lastModified);
+      const existing = storedFilesRef.current.find(
+        (f) =>
+          f.id === fileId ||
+          (f.size === file.size && !!id.producedAt && f.producedAt === id.producedAt && f.docTitle === id.title),
+      );
+      if (existing && existing.id !== fileId) {
+        // The same document found in a second folder: remember where, don't store twice.
+        await updateStoredFileMeta(existing.id, { relPath: existing.relPath ?? ctx.relPath });
+        return 'duplicate';
+      }
+
+      const msgDate = match.msgId
+        ? matchSourcesRef.current.msgStamps.find((s) => s.msgId === match.msgId)?.date
+        : undefined;
+      const producedAt = id.producedAt ?? msgDate ?? new Date(file.lastModified).toISOString();
+      const producedAtSource: StoredFileMeta['producedAtSource'] = id.producedAt
+        ? id.producedAtSource
+        : msgDate
+          ? 'message'
+          : 'file-mtime';
+
       const meta: StoredFileMeta = {
-        id: fileArchiveId(file.name, file.size, file.lastModified),
+        id: fileId,
         name: file.name,
         size: file.size,
         lastModified: file.lastModified,
         capturedAt: new Date().toISOString(),
-        source: 'attached',
-        linkedMomentId: moment.id,
-        linkedConvId: moment.convId,
+        source: ctx.source,
+        folderName: ctx.folderName,
+        relPath: ctx.relPath,
+        linkedMomentId: match.momentId,
+        linkedConvId: match.convId,
+        linkedMsgId: match.msgId,
+        producedAt,
+        producedAtSource,
+        docTitle: id.title,
+        docDescription: id.description,
+        isClaudeMade: id.isClaudeMade,
+        claudeScore: id.claudeScore,
+        identitySignals: id.signals,
+        identityVersion: IDENTITY_VERSION,
+        linkMethod: match.how,
+        linkConfidence: match.confidence,
+        linkWhy: match.why,
+        needsReview: !id.isClaudeMade && match.how === 'none',
       };
       await putStoredFile(meta, file);
-      setStoredFiles(await listStoredFiles());
-      pushToast(`Original “${file.name}” attached and kept.`, 'success');
+      const fresh = await listStoredFiles();
+      storedFilesRef.current = fresh;
+      setStoredFiles(fresh);
+      // A folder sweep often finds several files at once; announce them as one
+      // message rather than a stack of toasts covering the page.
+      if (ctx.source === 'watched') announceCapture(file.name);
+      // Mirror into the save folder, unless that folder is one we read from.
       const sf = saveFolderRef.current;
-      if (sf && (await sf.ready())) void sf.writeFile(file.name, file);
+      if (sf && (await sf.ready()) && !(await sf.isWatchedBy(watcherRef.current))) {
+        void sf.writeFile(file.name, file);
+      }
+      return 'kept';
     },
-    [pushToast],
+    [announceCapture],
   );
+
+  const addFilesByHand = useCallback(
+    async (files: File[], ctx: DocContext) => {
+      let kept = 0;
+      let ignored = 0;
+      for (const f of files) {
+        const result = await captureDocFile(f, { ...ctx, force: true });
+        if (result === 'kept') kept++;
+        else ignored++;
+      }
+      return { kept, ignored };
+    },
+    [captureDocFile],
+  );
+
+  const attachOriginal = useCallback(
+    async (moment: FileMoment, file: File) => {
+      await captureDocFile(file, { source: 'attached', force: true });
+      // The user pointed at this row, so trust that over any guess.
+      const fileId = fileArchiveId(file.name, file.size, file.lastModified);
+      await updateStoredFileMeta(fileId, {
+        linkedMomentId: moment.id,
+        linkedConvId: moment.convId,
+        linkedMsgId: moment.msgId,
+        linkMethod: 'manual',
+        linkConfidence: 1,
+        linkWhy: 'You added this file to this chat yourself.',
+        needsReview: false,
+      });
+      const fresh = await listStoredFiles();
+      storedFilesRef.current = fresh;
+      setStoredFiles(fresh);
+      pushToast(`Saved “${file.name}” — it's yours forever now.`, 'success');
+    },
+    [captureDocFile, pushToast],
+  );
+
+  const linkFileToConversation = useCallback(
+    async (fileId: string, convId: string) => {
+      const conv = convMetaRef.current.find((c) => c.uuid === convId);
+      await updateStoredFileMeta(fileId, {
+        linkedConvId: convId,
+        linkedMomentId: undefined,
+        linkMethod: 'manual',
+        linkConfidence: 1,
+        linkWhy: `You linked this to “${conv?.name ?? 'this chat'}”.`,
+        needsReview: false,
+      });
+      const fresh = await listStoredFiles();
+      storedFilesRef.current = fresh;
+      setStoredFiles(fresh);
+    },
+    [],
+  );
+
+  const keepReviewedFile = useCallback(async (fileId: string) => {
+    await updateStoredFileMeta(fileId, { needsReview: false });
+    const fresh = await listStoredFiles();
+    storedFilesRef.current = fresh;
+    setStoredFiles(fresh);
+  }, []);
 
   const downloadOriginal = useCallback(
     async (id: string) => {
@@ -712,7 +886,12 @@ export function StoreProvider({ children }: { children: ReactNode }) {
   const removeStoredFile = useCallback(
     async (id: string) => {
       await dbDeleteStoredFile(id);
-      setStoredFiles(await listStoredFiles());
+      // Forget it in the watcher too, so a rescan can bring it back rather
+      // than suppressing it forever.
+      await watcherRef.current?.forgetDoc(id);
+      const fresh = await listStoredFiles();
+      storedFilesRef.current = fresh;
+      setStoredFiles(fresh);
       pushToast('Removed from Chat Atlas. (The file itself, wherever it lives, is untouched.)', 'info');
     },
     [pushToast],
@@ -734,7 +913,11 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     await saveFolderRef.current?.turnOff();
   }, []);
 
-  /** Write the whole archive to the save folder: kept originals as-is, rebuilt Word files for the rest. */
+  /**
+   * Copy the real files into the user's chosen folder. ONLY bytes we actually
+   * hold are ever written — the app must never invent a document and put it on
+   * disk under a filename that looks like one of Claude's.
+   */
   const saveAllToFolder = useCallback(async () => {
     const sf = saveFolderRef.current;
     if (!sf || !(await sf.ready())) {
@@ -746,52 +929,72 @@ export function StoreProvider({ children }: { children: ReactNode }) {
       const blob = await getStoredFileBlob(f.id);
       if (blob && (await sf.writeFile(f.name, blob))) written++;
     }
-    const { compileMoment } = await import('../lib/compile');
-    const { renderDocxBlob } = await import('../lib/renderDocx');
-    for (const m of fileMoments) {
-      if (originalsByMoment.has(m.id)) continue;
-      try {
-        const doc = await compileMoment(m);
-        const blob = await renderDocxBlob(doc);
-        const base = (m.fileNames[0] ?? doc.title).replace(/\.[a-z0-9]+$/i, '');
-        if (await sf.writeFile(`${base}.docx`, blob)) written++;
-      } catch {
-        /* fail soft per file */
-      }
-    }
-    pushToast(written > 0 ? `Saved ${written} file${written === 1 ? '' : 's'} to the folder.` : 'Nothing to save yet.', written ? 'success' : 'info');
-  }, [storedFiles, fileMoments, originalsByMoment, pushToast]);
+    pushToast(
+      written > 0 ? `Copied ${written} file${written === 1 ? '' : 's'} to the folder.` : 'Nothing to copy there yet.',
+      written ? 'success' : 'info',
+    );
+  }, [storedFiles, pushToast]);
 
-  // Auto-save: new file-moments (arriving with new imports) get a rebuilt
-  // .docx written to the save folder, unless their original was captured.
+  // Files captured by older versions carry none of the identity information
+  // the Files view now relies on. Read them once, in small chunks so the page
+  // stays responsive, and fill in the gaps. Nothing is ever deleted here:
+  // anything that turns out to be neither Claude's nor linked to a chat is
+  // flagged for the user to review.
   useEffect(() => {
-    if (saveFolderStatus.state !== 'on') return;
+    if (loading) return;
     void (async () => {
-      const since = await getMeta<string>('saveFolderSince');
-      if (!since) return;
-      const done = (await getMeta<Record<string, true>>('autoSavedMoments')) ?? {};
-      const pending = fileMoments.filter((m) => m.date > since && !done[m.id] && !originalsByMoment.has(m.id));
-      if (pending.length === 0) return;
-      const sf = saveFolderRef.current;
-      if (!sf || !(await sf.ready())) return;
-      const { compileMoment } = await import('../lib/compile');
-      const { renderDocxBlob } = await import('../lib/renderDocx');
-      let written = 0;
-      for (const m of pending) {
+      const stale = storedFilesRef.current.filter((f) => f.identityVersion !== IDENTITY_VERSION);
+      if (stale.length === 0) return;
+      setBackfillProgress({ done: 0, total: stale.length });
+      for (let i = 0; i < stale.length; i++) {
+        const f = stale[i];
         try {
-          const doc = await compileMoment(m);
-          const blob = await renderDocxBlob(doc);
-          const base = (m.fileNames[0] ?? doc.title).replace(/\.[a-z0-9]+$/i, '');
-          if (await sf.writeFile(`${base}.docx`, blob)) written++;
+          const blob = await getStoredFileBlob(f.id);
+          if (blob) {
+            const id = await identifyFile(blob, f.name);
+            const match = f.linkedConvId
+              ? null
+              : matchFile(f.name, id, matchSourcesRef.current);
+            const msgDate = match?.msgId
+              ? matchSourcesRef.current.msgStamps.find((s) => s.msgId === match.msgId)?.date
+              : undefined;
+            await updateStoredFileMeta(f.id, {
+              producedAt: id.producedAt ?? msgDate ?? new Date(f.lastModified).toISOString(),
+              producedAtSource: id.producedAt ? id.producedAtSource : msgDate ? 'message' : 'file-mtime',
+              docTitle: id.title,
+              docDescription: id.description,
+              isClaudeMade: id.isClaudeMade,
+              claudeScore: id.claudeScore,
+              identitySignals: id.signals,
+              identityVersion: IDENTITY_VERSION,
+              ...(match && match.how !== 'none'
+                ? {
+                    linkedConvId: match.convId,
+                    linkedMomentId: match.momentId,
+                    linkedMsgId: match.msgId,
+                    linkMethod: match.how,
+                    linkConfidence: match.confidence,
+                    linkWhy: match.why,
+                  }
+                : {}),
+              needsReview: !id.isClaudeMade && !f.linkedConvId && (!match || match.how === 'none'),
+            });
+          }
         } catch {
-          /* fail soft per file */
+          /* one unreadable file must not stall the rest */
         }
-        done[m.id] = true;
+        if (i % 5 === 4) {
+          setBackfillProgress({ done: i + 1, total: stale.length });
+          await new Promise((r) => setTimeout(r, 0));
+        }
       }
-      await setMeta('autoSavedMoments', done);
-      if (written > 0) pushToast(`Saved ${written} new document${written === 1 ? '' : 's'} to your folder.`, 'success');
+      const fresh = await listStoredFiles();
+      storedFilesRef.current = fresh;
+      setStoredFiles(fresh);
+      setBackfillProgress(null);
     })();
-  }, [fileMoments, saveFolderStatus, originalsByMoment, pushToast]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [loading, fileMoments.length]);
 
   // ---- app updates ----
 
@@ -844,9 +1047,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
   }, []);
 
   // Keep the watcher's capture handler current, and restore the save folder once.
-  useEffect(() => {
-    watcherRef.current?.setDocCapture(captureDocFile);
-  }, [captureDocFile]);
+  captureRef.current = captureDocFile;
 
   useEffect(() => {
     const sf = new SaveFolder((s) => setSaveFolderStatus(s));
@@ -933,6 +1134,13 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     attachOriginal,
     downloadOriginal,
     removeStoredFile,
+    addFilesByHand,
+    linkFileToConversation,
+    keepReviewedFile,
+    rescanFolders,
+    addWatchFolder,
+    scanFolderOnce,
+    backfillProgress,
     saveFolderStatus,
     chooseSaveFolder,
     resumeSaveFolder,

@@ -10,7 +10,8 @@
     "preview": "vite preview",
     "icons": "node icon/make-icons.mjs",
     "test:e2e": "playwright test",
-    "test:launcher": "node --test tests/launcher.test.mjs"
+    "test:launcher": "node --test tests/launcher.test.mjs",
+    "test:no-fabrication": "node --test tests/no-fabrication.test.mjs"
   },
   "dependencies": {
     "docx": "^9.7.1",

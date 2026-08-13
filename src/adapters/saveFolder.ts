@@ -27,6 +27,15 @@ export class SaveFolder {
     this.onStatus = onStatus;
   }
 
+  /**
+   * True when this folder is also one the watcher reads from — writing into it
+   * would mean copying a file back over itself.
+   */
+  async isWatchedBy(watcher: { isWatched(handle: unknown): Promise<boolean> } | null | undefined): Promise<boolean> {
+    if (!this.handle || !watcher) return false;
+    return watcher.isWatched(this.handle);
+  }
+
   async restore(): Promise<void> {
     const saved = await getMeta<WritableDirHandle>('saveFolderHandle');
     if (!saved) {

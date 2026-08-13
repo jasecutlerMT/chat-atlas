@@ -25,11 +25,12 @@ import { extractOutputs } from '../lib/classify';
 import { detectEntities, decorateTitles } from '../lib/entities';
 import { detectFileMoments, referencedFilenames } from '../lib/fileMoments';
 import { groupVersions, buildTextLookup } from '../lib/versions';
-import { countWords, firstLine } from '../lib/text';
+import { countWords, detectCode, firstLine } from '../lib/text';
 import type {
   Conversation,
   ConvMeta,
   FromWorker,
+  MsgStamp,
   OutputCard,
   SearchFilters,
   SearchHit,
@@ -51,6 +52,8 @@ interface SearchDoc {
   date: string;
   text: string;
   attachmentText: string;
+  /** Prose Claude wrote into a document through a tool. */
+  toolText: string;
   hasCode: boolean;
   hasTable: boolean;
   isLong: boolean;
@@ -65,7 +68,7 @@ const convDocIds = new Map<string, string[]>();
 
 function newIndex(): MiniSearch<SearchDoc> {
   return new MiniSearch<SearchDoc>({
-    fields: ['text', 'attachmentText', 'convName'],
+    fields: ['text', 'attachmentText', 'toolText', 'convName'],
     storeFields: [],
     searchOptions: {
       prefix: true,
@@ -82,7 +85,10 @@ function docsFor(conv: Conversation): SearchDoc[] {
     const attachmentText = m.attachments
       .map((a) => [a.file_name, a.extracted_content].filter(Boolean).join('\n'))
       .join('\n');
-    if (!m.text.trim() && !attachmentText.trim()) continue;
+    // Document text Claude wrote through a tool is worth searching, but only
+    // when it is prose — artifact source code would flood the results.
+    const toolProse = m.toolText && !detectCode(m.toolText) && countWords(m.toolText) >= 200 ? m.toolText : '';
+    if (!m.text.trim() && !attachmentText.trim() && !toolProse) continue;
     docs.push({
       id: `${conv.uuid}/${m.uuid}`,
       convId: conv.uuid,
@@ -92,6 +98,7 @@ function docsFor(conv: Conversation): SearchDoc[] {
       date: m.created_at || conv.updated_at,
       text: m.text,
       attachmentText,
+      toolText: toolProse,
       hasCode: m.hasCode,
       hasTable: m.hasTable,
       isLong: m.isLong,
@@ -153,6 +160,27 @@ async function buildDerived(convs: Conversation[]): Promise<void> {
   const fileMoments = detectFileMoments(convs);
   const referencedFiles = referencedFilenames(fileMoments);
 
+  // Timestamps of everything Claude said, so a downloaded file can be matched
+  // to the chat that was live at the instant the file was made.
+  const momentKeys = new Set(fileMoments.map((m) => `${m.convId}/${m.msgId}`));
+  const msgStamps: MsgStamp[] = [];
+  for (const c of convs) {
+    for (const m of c.messages) {
+      if (m.sender !== 'assistant' || !m.created_at) continue;
+      if (isNaN(new Date(m.created_at).getTime())) continue;
+      msgStamps.push({
+        convId: c.uuid,
+        convName: c.name,
+        msgId: m.uuid,
+        date: m.created_at,
+        words: countWords(m.text),
+        isMoment: momentKeys.has(`${c.uuid}/${m.uuid}`),
+      });
+    }
+  }
+  msgStamps.sort((a, b) => (a.date < b.date ? -1 : 1));
+  const cappedStamps = msgStamps.length > 50_000 ? msgStamps.slice(-50_000) : msgStamps;
+
   outputs.sort((a, b) => (a.date < b.date ? 1 : -1));
   convMeta.sort((a, b) => (a.updated_at < b.updated_at ? 1 : -1));
   await setDerived({
@@ -163,6 +191,7 @@ async function buildDerived(convs: Conversation[]): Promise<void> {
     entities,
     fileMoments,
     referencedFiles,
+    msgStamps: cappedStamps,
   });
 }
 

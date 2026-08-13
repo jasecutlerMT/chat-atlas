@@ -30,6 +30,10 @@ function conv(n, name, created, updated, messages) {
   return { uuid: convId(n), name, created_at: created, updated_at: updated, chat_messages: messages };
 }
 
+/** Body text used inside the synthetic Claude documents the specs build. */
+export const BODY_ACME =
+  'Acme Logistics moves freight across Victoria and New South Wales, and their operations desk still books carriers by hand.';
+
 const BRIEF = `# Research brief: Acme Logistics
 
 ## Overview
@@ -114,6 +118,83 @@ Them: Send me something first.
 You: Done. If the one-pager lands, I pencil Thursday. Deal?`;
 
 const LONG_DOC = `The received wisdom says enterprise sales is where careers are made, but the data tells a different story for someone at an early stage. Mid-market deals close in weeks rather than quarters, which means a new rep gets ten times the learning cycles in a single year. Every discovery call and every lost deal compounds into pattern recognition that enterprise reps take years to accumulate. There is also a structural argument worth taking seriously. Mid-market teams are small enough that a rep who shows initiative gets pulled into strategy conversations that would sit three layers away at a large vendor, and the distance between the floor and revenue leadership is two desks rather than two org charts. Finally there is the tooling angle to weigh. Mid-market stacks are modern because the companies themselves are young, so the instruments you learn are the ones the industry is standardising on rather than a decade-old system customised beyond recognition. The trade-off is real: smaller logos on the resume and smaller absolute deal sizes. But early on you should optimise for repetitions rather than logos, because the logos come later and they come faster to people who learned the craft where the cycle time is short.`;
+
+/**
+ * Builds a real .docx carrying the metadata Chat Atlas fingerprints.
+ * `claudeMade: false` simulates the same file re-saved in Word: an
+ * Application stamp, a named last-saver, a high revision and Word's own extra
+ * parts — all of which must flip the verdict.
+ */
+export async function makeClaudeDocx({
+  title,
+  description = 'a document made for testing',
+  creator = 'Jason',
+  created = '2026-06-28T09:05:30.000Z',
+  modified,
+  body = 'This is the body of the document.',
+  claudeMade = true,
+}) {
+  const zip = new JSZip();
+  zip.file(
+    '[Content_Types].xml',
+    `<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Default Extension="xml" ContentType="application/xml"/><Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/><Override PartName="/word/document.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml"/></Types>`,
+  );
+  zip.file(
+    '_rels/.rels',
+    `<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="word/document.xml"/></Relationships>`,
+  );
+  zip.file(
+    'word/document.xml',
+    `<?xml version="1.0" encoding="UTF-8" standalone="yes"?><w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"><w:body>${body
+      .split('\n')
+      .map((line) => `<w:p><w:r><w:t>${line.replace(/&/g, '&amp;').replace(/</g, '&lt;')}</w:t></w:r></w:p>`)
+      .join('')}</w:body></w:document>`,
+  );
+  const mod = modified ?? (claudeMade ? created : '2026-07-02T11:00:00.000Z');
+  zip.file(
+    'docProps/core.xml',
+    `<?xml version="1.0" encoding="UTF-8" standalone="yes"?><cp:coreProperties xmlns:cp="http://schemas.openxmlformats.org/package/2006/metadata/core-properties" xmlns:dc="http://purl.org/dc/elements/1.1/" xmlns:dcterms="http://purl.org/dc/terms/" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance">${
+      title ? `<dc:title>${title}</dc:title>` : ''
+    }<dc:creator>${claudeMade ? creator : 'Jason'}</dc:creator>${
+      description ? `<dc:description>${description}</dc:description>` : ''
+    }<cp:lastModifiedBy>${claudeMade ? 'Un-named' : 'Jason'}</cp:lastModifiedBy><cp:revision>${
+      claudeMade ? 1 : 14
+    }</cp:revision><dcterms:created xsi:type="dcterms:W3CDTF">${created}</dcterms:created><dcterms:modified xsi:type="dcterms:W3CDTF">${mod}</dcterms:modified></cp:coreProperties>`,
+  );
+  zip.file(
+    'docProps/app.xml',
+    claudeMade
+      ? `<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Properties xmlns="http://schemas.openxmlformats.org/officeDocument/2006/extended-properties"/>`
+      : `<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Properties xmlns="http://schemas.openxmlformats.org/officeDocument/2006/extended-properties"><Application>Microsoft Office Word</Application><AppVersion>16.0000</AppVersion></Properties>`,
+  );
+  if (!claudeMade) {
+    zip.file('word/theme/theme1.xml', '<theme/>');
+    zip.file('word/webSettings.xml', '<webSettings/>');
+  }
+  return zip.generateAsync({ type: 'nodebuffer' });
+}
+
+/** A minimal PDF whose Info dictionary is byte-scannable. */
+export function makePdfBytes({ title, created = 'D:20260628090532Z', producer = 'LibreOffice 24.2' }) {
+  const body = `%PDF-1.7
+1 0 obj
+<</Type/Catalog/Pages 2 0 R>>
+endobj
+2 0 obj
+<</Type/Pages/Kids[3 0 R]/Count 1>>
+endobj
+3 0 obj
+<</Type/Page/Parent 2 0 R/MediaBox[0 0 595 842]>>
+endobj
+4 0 obj
+<</Title(${title})/Producer(${producer})/Creator(Writer)/CreationDate(${created})>>
+endobj
+trailer
+<</Root 1 0 R/Info 4 0 R>>
+%%EOF
+`;
+  return Buffer.from(body, 'latin1');
+}
 
 export async function makeFixtures() {
   mkdirSync(TMP, { recursive: true });

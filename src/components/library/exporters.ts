@@ -2,19 +2,29 @@
 // synchronously inside the click, so the PDF path opens it first and fills
 // it once compilation finishes.
 
-import type { Entity, FileMoment, OutputCard } from '../../types';
-import { compileMoment, compileOutputs, compiledToMarkdown, type CompiledDoc } from '../../lib/compile';
+// Exports for the Library's "Combine these into a new document" feature.
+//
+// Every file produced here is a NEW document built from chat content, so its
+// filename always carries the `chat-atlas-` prefix — it can never be confused
+// with, or overwrite, one of the original files Claude made. Reproducing one
+// of Claude's files is not possible from text and is never attempted: those
+// are served as exact stored bytes from the Files view.
+
+import type { Entity, OutputCard } from '../../types';
+import { compileOutputs, compiledToMarkdown, type CompiledDoc } from '../../lib/compile';
 import { downloadBlob, downloadText, safeFilename } from '../../lib/download';
 import { fillPrintWindow, openPrintWindow } from '../../lib/renderPrint';
 
+const NEW_DOC_PREFIX = 'chat-atlas-';
+
 export async function exportCompiled(doc: CompiledDoc, format: 'docx' | 'md'): Promise<void> {
   if (format === 'md') {
-    downloadText(doc.title, compiledToMarkdown(doc));
+    downloadText(NEW_DOC_PREFIX + doc.title, compiledToMarkdown(doc));
     return;
   }
   const { renderDocxBlob } = await import('../../lib/renderDocx');
   const blob = await renderDocxBlob(doc);
-  downloadBlob(blob, safeFilename(doc.title, '.docx'));
+  downloadBlob(blob, safeFilename(NEW_DOC_PREFIX + doc.title, '.docx'));
 }
 
 export function exportCompiledPdf(build: () => Promise<CompiledDoc>): void {
@@ -34,11 +44,3 @@ export async function exportSingleCard(card: OutputCard, entities: Entity[], for
   await exportCompiled(doc, format);
 }
 
-export async function exportMoment(moment: FileMoment, format: 'docx' | 'pdf' | 'md'): Promise<void> {
-  if (format === 'pdf') {
-    exportCompiledPdf(() => compileMoment(moment));
-    return;
-  }
-  const doc = await compileMoment(moment);
-  await exportCompiled(doc, format);
-}

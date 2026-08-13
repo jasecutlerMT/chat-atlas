@@ -2321,6 +2321,136 @@ input[type='range'] {
   flex-shrink: 0;
 }
 
+/* files view: banner, toolbar, catch-up list */
+
+.watch-banner {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 18px;
+  flex-wrap: wrap;
+  padding: 16px 20px;
+  border-radius: 14px;
+  background: var(--bg-elev);
+  border: 1px solid var(--border-strong);
+  margin-bottom: 16px;
+}
+
+.watch-banner-warn {
+  background: var(--accent-soft);
+  border-color: var(--accent);
+}
+
+.watch-banner strong {
+  font-size: 15px;
+}
+
+.watch-banner p {
+  margin: 3px 0 0;
+  font-size: 13.5px;
+  color: var(--text-muted);
+}
+
+.watch-banner-actions {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-shrink: 0;
+}
+
+.files-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+  margin-bottom: 10px;
+}
+
+.files-toolbar .chip-row-static {
+  margin-bottom: 0;
+}
+
+.files-filter {
+  flex: 1;
+  min-width: 180px;
+  max-width: 320px;
+  font-size: 13px;
+}
+
+.files-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  margin-bottom: 16px;
+}
+
+.files-watching-note {
+  font-size: 12.5px;
+  color: var(--text-faint);
+}
+
+.file-card-name {
+  font-family: ui-monospace, 'SF Mono', Menlo, Consolas, monospace;
+  font-size: 12px;
+  color: var(--text-faint);
+}
+
+.file-card-why {
+  color: var(--text-faint);
+}
+
+.file-card-unlinked {
+  font-size: 12.5px;
+  color: var(--text-muted);
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+.file-card-unlinked select {
+  font-size: 12.5px;
+  max-width: 240px;
+}
+
+.file-card-wanted {
+  background: transparent;
+  border-style: dashed;
+}
+
+.file-card-icon-ghost {
+  opacity: 0.55;
+}
+
+.file-ext-ghost {
+  background: var(--text-faint);
+}
+
+.wanted-group {
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  padding: 12px;
+  margin-bottom: 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  background: var(--bg-elev);
+}
+
+.wanted-group-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.wanted-group-name {
+  font-weight: 650;
+  font-size: 14px;
+}
+
 /* documents shelf */
 
 .badge-askedfile {

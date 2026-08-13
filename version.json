@@ -1,5 +1,5 @@
 {
-  "version": 6,
-  "label": "Files front and centre: keep every file, download as Word or PDF, plain English",
+  "version": 7,
+  "label": "Only Claude's real files, newest first, exactly as he made them",
   "note": "Bump 'version' on every release and push the mirror (see scripts/publish-mirror.sh). The in-app Update button compares this number with the public mirror's copy."
 }

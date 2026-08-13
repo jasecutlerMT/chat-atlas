@@ -54,45 +54,57 @@ seconds, unpacked, merged in (never duplicated), and announced with a little
 "5 new conversations, 3 updated" message. Prefer to do it by hand? Drag the
 zip anywhere onto the window, any time.
 
-## Your files: never lose a file Claude made again
+## Your files: the exact documents Claude made you
 
-The app opens onto **Your files** — every PDF and Word document from your
-history, shown like the download cards in Claude's own chat: a name, a file
-type, a **Download** button.
+The app opens onto **Your files** — every PDF and Word document Claude has
+made for you, newest first, showing the date *and time* Claude made it. One
+**Download** button per file, and it hands back the original, byte for byte.
 
-An honest fact first: Claude's data export contains the *words* of what
-Claude made for you, but never the actual PDF or Word file — those bytes
-only ever exist on Anthropic's servers and, briefly, in the folder you
-download into. Chat Atlas works with that reality:
+**The one promise this app makes:** it will only ever give you bytes it
+actually holds. It never writes a document itself and passes it off as
+Claude's. If the real file isn't on this Mac, the row says so and points you
+back to the chat where you can download it.
 
-- **Going forward, you keep the exact file automatically.** Point Chat
-  Atlas at the folder your Claude downloads land in, and every document
-  that arrives there is saved permanently and matched to its conversation —
-  even though Claude names files like `SydneyTechTargetList100.docx` while
-  the chat says "Sydney tech target list 100"; the matching understands
-  that. Delete the download, empty the bin — your copy stays, marked
-  **"✓ This is the exact file you downloaded from Claude."**
-- **When the file itself wasn't saved** (anything from before Chat Atlas
-  existed), the row says so plainly and its Download button makes a fresh
-  Word file — or PDF — from the conversation's content. If the old file
-  still exists somewhere on your Mac, the paperclip button attaches it,
-  kept for good.
-- **Search finds files first.** Type a few letters of the name and the file
-  appears at the top of the results with its own Download button.
-- **Auto-save folder**: pick a folder once (say "Chat Atlas Documents") and
-  copies of everything here are also written into it as real files, with a
-  "Copy all there now" button for the backlog.
+Some honest background. Claude's data export contains the *words* of your
+conversations, never the actual PDF or Word file. Those bytes exist in two
+places only: Anthropic's servers, and your own Mac once you've clicked
+download. Fetching them from Anthropic would need your Claude login, which
+this app must never hold. So:
 
-Everything downloads as **Word or PDF** — nowhere in the app will you be
-handed a .md file.
+- **From now on it's automatic.** Point Chat Atlas at the folder your Claude
+  downloads land in — or several folders; it looks inside sub-folders too —
+  and every document Claude made that arrives there is saved permanently.
+  Delete the download, empty the bin: your copy stays.
+- **It knows Claude's work when it sees it.** Every file Claude makes
+  carries its own title, description and the exact instant it was created.
+  Chat Atlas reads that, so files sort by when Claude actually made them,
+  show Claude's own title rather than a mangled filename, and get matched to
+  the right conversation — even when the filename gives nothing away (an
+  `export-8837.docx` still finds its chat, by the minute it was made).
+  Anything that isn't Claude's — your own Word documents, a bank statement
+  in the same folder — is left alone, silently.
+- **Files you haven't downloaded yet are still listed**, grouped by chat,
+  with a **Get it from Claude** button that opens that exact conversation.
+  Claude's own "Download all" there collects every file from that chat at
+  once, and they appear here by themselves. A running count shows how far
+  through the backlog you are.
+- **Already have files scattered about?** Drag a whole folder onto the
+  window, use **Add files I already have**, or **Scan a folder once**.
+- **Auto-save folder**: pick a folder once and copies of everything here are
+  written into it as real files too.
+
+Elsewhere in the app, **Combine into a new document** does something
+different and says so: it builds a *brand-new* file out of what Claude wrote
+in your chats. Those always download with a `chat-atlas-` prefix so they can
+never be confused with the originals.
 
 ## How your library is organised
 
 The app opens onto **the Library** — your knowledge, not your chat log:
 
+- **Your files** — the file archive described above; where the app opens.
 - **Overview** — what's new since your last export, what you've pinned, and
   the latest things Claude made for you.
-- **Documents & files** — the file archive described above.
 - **By type** — Research briefs, Email or message drafts, Plans or
   frameworks, Scripts, Documents, Code. All found and labelled automatically.
 - **Companies, people & tools** — Chat Atlas reads your conversations and
@@ -113,20 +125,16 @@ said it, has code / table / long-form / attachment), and clicking a result
 opens the conversation at that exact message, highlighted. The **Map** and
 **Timeline** tabs are still there when you want the bird's-eye view.
 
-## Turning knowledge into documents
+## Building something new out of your chats
 
-Every list in the Library — a type, a company page, a collection, your
-pinned items — has a **Make one document** button. It combines everything
-shown into a single tidy file with a cover and contents page, in your
-choice of:
+Separate from Your files, every list in the Library — a type, a company
+page, a collection, your pinned items — has a **Combine into a new
+document** button. It assembles what Claude *wrote in the chats* into one
+tidy file with a cover and contents page, as **Word** or **PDF**.
 
-- **Word (.docx)** — a real Word document, one click.
-- **PDF** — the app prepares a print-perfect page and opens Chrome's dialog;
-  choose "Save as PDF". Two clicks.
-- **Markdown (.md)** — plain text with formatting, for pasting anywhere.
-
-Every individual item has the same three options behind its download button,
-plus a copy button that grabs the full text.
+This is a new document, not a copy of anything Claude gave you, so its
+filename always begins `chat-atlas-`. Individual items offer the same two
+formats, plus a copy button for the full text.
 
 ## Updating the app: one click
 
@@ -176,7 +184,7 @@ Worker; storage is IndexedDB via `idb`; zips via `jszip`; Word files via
 (`src/adapters/`) so an official live source could be plugged in without
 rewriting the app. Tests: `npm run test:e2e` (Playwright, drives the real
 app end to end, including unzipping the generated .docx to verify it) and
-`npm run test:launcher` (the Mac launcher's folder-resolution ladder).
+`npm run test:launcher` (the Mac launcher’s folder-resolution ladder) and `npm run test:no-fabrication` (a tripwire that fails if the app ever regains the ability to invent a document).
 The Mac app bundle follows the same pattern as the tax-tracker's launcher:
 a hand-authored `Info.plist` + shell script + `.icns` built by
 `npm run icons`.

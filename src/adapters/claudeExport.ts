@@ -8,6 +8,9 @@ import type { Attachment, ChatMessage, Conversation, SkippedItem } from '../type
 import { countWords, detectCode, detectTable } from '../lib/text';
 import type { DataSourceAdapter, ParseResult } from './adapter';
 
+/** Extensions that mean "this is a document", when a tool call names a file. */
+const DOC_EXT = /\.(pdf|docx?|xlsx?|pptx?|csv|rtf)$/i;
+
 function asString(v: unknown): string {
   return typeof v === 'string' ? v : '';
 }
@@ -35,19 +38,41 @@ function normaliseMessage(raw: Record<string, unknown>, convName: string, skippe
   }
   const senderRaw = asString(raw.sender);
   const sender: 'human' | 'assistant' = senderRaw === 'human' ? 'human' : 'assistant';
+  /** Filenames that only ever appear inside a tool call, never in the visible chat. */
+  const fileNamesFromTools: string[] = [];
 
-  // Prefer joining the structured content blocks; fall back to the flat text
-  // field. Only visible prose counts: tool activity, thinking and other
-  // machinery blocks are skipped entirely — turning them into placeholder
-  // text would pollute titles, previews, search and word counts.
+  // `text` is the visible prose only: tool activity, thinking and other
+  // machinery are never folded into it, because that pollutes titles,
+  // previews, search and word counts.
+  //
+  // What a tool was ASKED to write is kept separately, in `toolText`. When
+  // Claude builds a document it passes the whole document to a tool, so this
+  // is often the only record of what a file contained — used to match a
+  // downloaded file to its chat, and to preview what was inside it. It is
+  // never offered as a document: only the real file is.
   let text = '';
+  const toolParts: string[] = [];
+  const toolTitles: string[] = [];
   if (Array.isArray(raw.content)) {
     const parts: string[] = [];
     for (const block of raw.content) {
-      if (block && typeof block === 'object') {
-        const b = block as Record<string, unknown>;
-        if ((b.type === 'text' || b.type === undefined) && typeof b.text === 'string' && b.text.trim()) {
-          parts.push(b.text);
+      if (!block || typeof block !== 'object') continue;
+      const b = block as Record<string, unknown>;
+      if ((b.type === 'text' || b.type === undefined) && typeof b.text === 'string' && b.text.trim()) {
+        parts.push(b.text);
+        continue;
+      }
+      if (b.type === 'tool_use' && b.input && typeof b.input === 'object') {
+        const input = b.input as Record<string, unknown>;
+        for (const key of ['content', 'file_text', 'new_str', 'text', 'markdown', 'body', 'document']) {
+          const v = input[key];
+          if (typeof v === 'string' && v.trim().length >= 40) toolParts.push(v.trim());
+        }
+        for (const key of ['title', 'name', 'filename', 'file_name', 'path', 'id']) {
+          const v = input[key];
+          if (typeof v !== 'string' || !v.trim()) continue;
+          if (DOC_EXT.test(v)) fileNamesFromTools.push(v.trim());
+          else toolTitles.push(v.trim());
         }
       }
     }
@@ -55,6 +80,7 @@ function normaliseMessage(raw: Record<string, unknown>, convName: string, skippe
   }
   if (!text) text = asString(raw.text).trim();
   text = stripMachineryPlaceholders(text);
+  const toolText = toolParts.join('\n\n').slice(0, 200_000);
 
   const attachments: Attachment[] = [];
   if (Array.isArray(raw.attachments)) {
@@ -78,12 +104,12 @@ function normaliseMessage(raw: Record<string, unknown>, convName: string, skippe
       }
     }
   }
+  for (const n of fileNamesFromTools) if (!fileNames.includes(n)) fileNames.push(n);
 
-  const searchableText = text || (attachments.length || fileNames.length ? '' : '');
   return {
     uuid,
     sender,
-    text: searchableText,
+    text,
     created_at: asString(raw.created_at),
     attachments,
     fileNames,
@@ -91,6 +117,8 @@ function normaliseMessage(raw: Record<string, unknown>, convName: string, skippe
     hasTable: detectTable(text),
     isLong: countWords(text) > 300,
     hasAttachment: attachments.length > 0 || fileNames.length > 0,
+    ...(toolText ? { toolText } : {}),
+    ...(toolTitles.length ? { toolTitles } : {}),
   };
 }
 

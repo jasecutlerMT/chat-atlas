@@ -1,16 +1,36 @@
-// End-to-end walkthrough of Chat Atlas v2 (the Library redesign) in real
-// Chromium. Runs serially against one shared page so IndexedDB state carries
-// between steps, the way a real session does.
+// End-to-end walkthrough of Chat Atlas in real Chromium. Runs serially against
+// one shared page so IndexedDB state carries between steps, the way a real
+// session does.
 import { test, expect } from '@playwright/test';
 import JSZip from 'jszip';
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { makeFixtures, TMP } from './fixtures/make-fixture.mjs';
+import { makeFixtures, makeClaudeDocx, makePdfBytes, TMP, BODY_ACME } from './fixtures/make-fixture.mjs';
 
 test.describe.configure({ mode: 'serial' });
 
 let context;
 let page;
+
+/**
+ * Hands the watcher a stand-in folder containing the given files, then waits
+ * for the sweep. Bytes cross into the page as a plain array, since a Node
+ * Buffer cannot be passed through page.evaluate.
+ */
+async function injectFolder(page, files) {
+  await page.evaluate((list) => {
+    const built = list.map((f) => new File([new Uint8Array(f.bytes)], f.name, { lastModified: f.lastModified }));
+    window.__atlasTest.injectDirHandle({
+      name: 'Downloads (test)',
+      kind: 'directory',
+      async *values() {
+        for (const file of built) yield { kind: 'file', name: file.name, getFile: async () => file };
+      },
+      queryPermission: async () => 'granted',
+      requestPermission: async () => 'granted',
+    });
+  }, files);
+}
 
 test.beforeAll(async ({ browser }) => {
   await makeFixtures();
@@ -34,7 +54,10 @@ test('first import lands on Your files, with the library one click away', async 
   await expect(page.locator('.toast').first()).toContainText('new conversation', { timeout: 30_000 });
   await expect(page.locator('.tab-on')).toHaveText('Library');
   await expect(page.locator('.lib-head h1')).toHaveText('Your files');
-  await expect(page.locator('[data-testid="file-card"]').first()).toBeVisible();
+  // Nothing is saved yet, so the only rows are the files Claude made that are
+  // not on this Mac — each pointing back at its chat.
+  await expect(page.locator('[data-testid="wanted-card"]').first()).toBeVisible();
+  await expect(page.locator('[data-testid="file-card"]')).toHaveCount(0);
   await page.locator('.side-item', { hasText: 'Overview' }).click();
   await expect(page.locator('.side-item', { hasText: 'Research brief' })).toBeVisible();
   await expect(page.locator('.side-item', { hasText: 'Email or message draft' })).toBeVisible();
@@ -105,7 +128,7 @@ test('an entity page collects its outputs and conversations', async () => {
   await expect(page.locator('.lib-head h1')).toHaveText('Acme Logistics');
   expect(await page.locator('.lib-row').count()).toBeGreaterThanOrEqual(2);
   await expect(page.locator('.lib-section-head', { hasText: 'Conversations' })).toBeVisible();
-  await expect(page.locator('.secondary-btn', { hasText: 'Make one document' })).toBeVisible();
+  await expect(page.locator('.secondary-btn', { hasText: 'Combine into a new document' })).toBeVisible();
 });
 
 test('titles never start with conversational filler', async () => {
@@ -181,7 +204,7 @@ test('renaming and hiding entities persists across reloads', async () => {
 
 test('compile to a real Word document with cover and contents', async () => {
   await page.locator('.side-entity', { hasText: 'Acme Logistics' }).click();
-  await page.locator('.secondary-btn', { hasText: 'Make one document' }).click();
+  await page.locator('.secondary-btn', { hasText: 'Combine into a new document' }).click();
   await expect(page.locator('.compile-modal')).toBeVisible();
   const downloadPromise = page.waitForEvent('download');
   await page.locator('.primary-btn', { hasText: 'Word document' }).click();
@@ -196,7 +219,7 @@ test('compile to a real Word document with cover and contents', async () => {
 
 test('PDF export opens a print-ready page', async () => {
   await page.locator('.side-entity', { hasText: 'Acme Logistics' }).click();
-  await page.locator('.secondary-btn', { hasText: 'Make one document' }).click();
+  await page.locator('.secondary-btn', { hasText: 'Combine into a new document' }).click();
   const popupPromise = page.waitForEvent('popup');
   await page.locator('.secondary-btn', { hasText: 'PDF' }).click();
   const popup = await popupPromise;
@@ -268,108 +291,155 @@ test('old stored data is upgraded in place (no re-import needed)', async () => {
   await expect(page.locator('.side-entity', { hasText: 'Acme Logistics' })).toBeVisible({ timeout: 30_000 });
 });
 
-test('Your files lists every file and Download makes a real Word file', async () => {
+test('Your files shows only real saved files, newest first, with the time', async () => {
   await page.locator('.side-item', { hasText: 'Your files' }).click();
-  const row = page.locator('[data-testid="file-card"]', { hasText: 'Acme Logistics Brief' });
-  await expect(row).toBeVisible();
-  await expect(row.locator('.file-card-status')).toContainText('makes a fresh copy');
-  // The Word filter keeps it visible; the Download button makes a real .docx.
-  await page.locator('.chip', { hasText: /^Word$/ }).click();
-  await expect(page.locator('[data-testid="file-card"]', { hasText: 'Acme Logistics Brief' })).toBeVisible();
-  await page.locator('.chip', { hasText: /^All/ }).click();
-  const downloadPromise = page.waitForEvent('download');
-  await row.locator('.file-dl-btn').click();
-  const download = await downloadPromise;
-  const zip = await JSZip.loadAsync(readFileSync(await download.path()));
-  const docXml = await zip.file('word/document.xml').async('string');
-  expect(docXml).toContain('Acme Logistics');
-  expect(download.suggestedFilename()).toMatch(/\.docx$/);
-  // Markdown is gone from the interface.
-  expect(await page.getByText('Markdown').count()).toBe(0);
+  await expect(page.locator('.lib-head h1')).toHaveText('Your files');
+
+  // Three of Claude's documents, deliberately dropped into the folder in the
+  // OPPOSITE order to when Claude made them. The first has a filename and a
+  // title that match no chat at all — only its timestamp can place it.
+  const files = [
+    { name: 'export-8837.docx', title: 'Reference sheet 8837', created: '2026-06-28T09:05:30.000Z', body: BODY_ACME },
+    { name: 'plan-v2.docx', title: 'Week two plan', created: '2026-06-20T11:00:00.000Z', body: 'A plan for the coming week.' },
+    { name: 'older-note.docx', title: 'An older note', created: '2026-06-02T08:00:00.000Z', body: 'An older note entirely.' },
+  ];
+  const built = [];
+  for (const f of files) built.push({ ...f, buf: await makeClaudeDocx(f) });
+  // newest file gets the OLDEST modified time on disk, to prove the sort uses
+  // the time Claude made it rather than when it landed here.
+  await injectFolder(
+    page,
+    built.map((b, i) => ({ name: b.name, bytes: [...b.buf], lastModified: Date.now() - i * 1000 })),
+  );
+  // Wait for the whole sweep, not just the first file's toast.
+  await expect(page.locator('[data-testid="file-card"]')).toHaveCount(3, { timeout: 20_000 });
+
+  const titles = await page.locator('[data-testid="file-card"] .file-card-title').allTextContents();
+  expect(titles.slice(0, 3)).toEqual(['Reference sheet 8837', 'Week two plan', 'An older note']);
+  const times = await page.locator('[data-testid="file-card"] .file-card-sub').allTextContents();
+  expect(times[0]).toMatch(/\d{1,2}:\d{2}/);
+  // Nothing anywhere offers a made-up document.
+  expect(await page.getByText(/fresh copy|rebuilt|made fresh|Markdown/i).count()).toBe(0);
 });
 
-test('the exact original file is caught from the watched folder and kept', async () => {
-  const ORIGINAL_BYTES = 'ORIGINAL-DOCX-BYTES-FROM-CLAUDE-9f3a';
-  await page.evaluate((bytes) => {
-    const file = new File([bytes], 'acme-logistics-brief.docx', { lastModified: Date.now() });
-    const fakeHandle = {
-      name: 'Downloads (test)',
-      kind: 'directory',
-      async *values() {
-        yield { kind: 'file', name: file.name, getFile: async () => file };
-      },
-      queryPermission: async () => 'granted',
-      requestPermission: async () => 'granted',
-    };
-    window.__atlasTest.injectDirHandle(fakeHandle);
-  }, ORIGINAL_BYTES);
-  await expect(page.locator('.toast', { hasText: 'Saved “acme-logistics-brief.docx”' })).toBeVisible({ timeout: 20_000 });
-
-  const row = page.locator('[data-testid="file-card"]', { hasText: 'Acme Logistics Brief' });
-  await expect(row.locator('.file-card-status')).toContainText('exact file');
-  const downloadPromise = page.waitForEvent('download');
-  await row.locator('.file-dl-btn').click();
-  const download = await downloadPromise;
-  expect(readFileSync(await download.path(), 'utf8')).toBe(ORIGINAL_BYTES);
-
-  // The saved file survives a restart.
-  await page.reload();
-  await expect(page.locator('.lib-head h1')).toHaveText('Your files', { timeout: 20_000 });
-  await expect(
-    page.locator('[data-testid="file-card"]', { hasText: 'Acme Logistics Brief' }).locator('.file-card-status'),
-  ).toContainText('exact file', { timeout: 15_000 });
-});
-
-test('a file named like Claude names downloads still finds its conversation', async () => {
-  // "Sydney tech target list" chat; downloaded file "SydneyTechTargetList100.docx".
-  await page.evaluate(() => {
-    const file = new File(['SYDNEY-LIST-ORIGINAL-BYTES'], 'SydneyTechTargetList100.docx', { lastModified: Date.now() });
-    const fakeHandle = {
-      name: 'Downloads (test)',
-      kind: 'directory',
-      async *values() {
-        yield { kind: 'file', name: file.name, getFile: async () => file };
-      },
-      queryPermission: async () => 'granted',
-      requestPermission: async () => 'granted',
-    };
-    window.__atlasTest.injectDirHandle(fakeHandle);
-  });
-  await expect(page.locator('.toast', { hasText: 'SydneyTechTargetList100.docx' })).toBeVisible({ timeout: 20_000 });
-  const row = page.locator('[data-testid="file-card"]', { hasText: 'Sydney Tech Target List 100' });
+test('a file whose name matches nothing still finds its chat, by the time Claude made it', async () => {
+  // Neither "export-8837.docx" nor "Reference sheet 8837" appears anywhere in
+  // the history — only the moment Claude made it, inside the Sydney chat.
+  const row = page.locator('[data-testid="file-card"]', { hasText: 'Reference sheet 8837' });
   await expect(row).toBeVisible();
   await expect(row.locator('.file-card-sub')).toContainText('Sydney tech target list');
-  await expect(row.locator('.file-card-status')).toContainText('exact file');
-
-  // Searching finds the file first, with a working Download button.
-  await page.fill('.search-bar input', 'sydney');
-  const hit = page.locator('[data-testid="search-file-hit"]', { hasText: 'Sydney' }).first();
-  await expect(hit).toBeVisible({ timeout: 10_000 });
-  const downloadPromise = page.waitForEvent('download');
-  await hit.locator('.result-file-dl').click();
-  expect(readFileSync(await (await downloadPromise).path(), 'utf8')).toBe('SYDNEY-LIST-ORIGINAL-BYTES');
-  await page.fill('.search-bar input', '');
-  await page.keyboard.press('Escape');
+  await expect(row.locator('.file-card-status')).toContainText('Claude’s original file');
+  await expect(row.locator('.file-card-status')).toContainText('right in the middle of this chat');
 });
 
-test('an original can be attached by hand to an old file-moment', async () => {
-  const row = page.locator('[data-testid="file-card"]', { hasText: 'Northwind Negotiation Plan' });
-  await expect(row).toBeVisible();
-  await expect(row.locator('.file-card-status')).toContainText('makes a fresh copy');
-  const tmpFile = join(TMP, 'northwind-negotiation-plan.pdf');
-  const { writeFileSync } = await import('node:fs');
-  writeFileSync(tmpFile, 'HAND-ATTACHED-ORIGINAL-PDF');
-  await row.locator('[data-testid="attach-original"]').setInputFiles(tmpFile);
-  await expect(row.locator('.file-card-status')).toContainText('exact file');
+test('the download is byte-identical to the file Claude made', async () => {
+  const buf = await makeClaudeDocx({
+    name: 'exactness-check.docx',
+    title: 'Exactness check',
+    created: '2026-06-28T09:06:00.000Z',
+    body: 'Every byte of this file must survive the round trip.',
+  });
+  await injectFolder(page, [{ name: 'exactness-check.docx', bytes: [...buf], lastModified: Date.now() }]);
+  const row = page.locator('[data-testid="file-card"]', { hasText: 'Exactness check' });
+  await expect(row).toBeVisible({ timeout: 20_000 });
   const downloadPromise = page.waitForEvent('download');
   await row.locator('.file-dl-btn').click();
-  expect(readFileSync(await (await downloadPromise).path(), 'utf8')).toBe('HAND-ATTACHED-ORIGINAL-PDF');
+  const download = await downloadPromise;
+  expect(download.suggestedFilename()).toBe('exactness-check.docx');
+  expect(Buffer.compare(readFileSync(await download.path()), buf)).toBe(0);
 });
 
-test('the auto-save folder receives real files', async () => {
+test('files that are not Claude’s are left alone', async () => {
+  const wordResave = await makeClaudeDocx({
+    title: 'My own notes',
+    created: '2026-05-01T09:00:00.000Z',
+    body: 'Something I wrote myself in Word.',
+    claudeMade: false,
+  });
+  const statement = makePdfBytes({ title: 'Statement', producer: 'Quartz PDFContext', created: 'D:20260501090000Z' });
+  const before = await page.locator('[data-testid="file-card"]').count();
+  await injectFolder(page, [
+    { name: 'bank-statement-july.pdf', bytes: [...statement], lastModified: Date.now() },
+    { name: 'my-own-notes.docx', bytes: [...wordResave], lastModified: Date.now() },
+  ]);
+  await page.waitForTimeout(2500);
+  expect(await page.locator('[data-testid="file-card"]').count()).toBe(before);
+  expect(await page.getByText(/bank-statement/i).count()).toBe(0);
+});
+
+test('files Claude made that are not on this Mac are listed by chat, with no fake download', async () => {
+  await expect(page.locator('[data-testid="wanted-head"]')).toBeVisible();
+  const wanted = page.locator('[data-testid="wanted-card"]').first();
+  await expect(wanted).toBeVisible();
+  expect(await wanted.locator('.file-dl-btn').getAttribute('href')).toMatch(/^https:\/\/claude\.ai\/chat\//);
+  // Every Download button in the app hands over real bytes.
+  const downloads = page.locator('button.file-dl-btn');
+  const real = page.locator('button.file-dl-btn[data-real="1"]');
+  expect(await downloads.count()).toBe(await real.count());
+  // The group header links straight to the chat so "Download all" works there.
+  const group = page.locator('.wanted-group-head a').first();
+  expect(await group.getAttribute('href')).toMatch(/^https:\/\/claude\.ai\/chat\//);
+  expect(await group.getAttribute('rel')).toContain('noopener');
+});
+
+test('an original can be added by hand to a file that is missing', async () => {
+  const buf = await makeClaudeDocx({ title: 'Hand added brief', created: '2026-06-26T10:12:00.000Z', body: 'Added by hand.' });
+  const tmpFile = join(TMP, 'hand-added.docx');
+  const { writeFileSync } = await import('node:fs');
+  writeFileSync(tmpFile, buf);
+  const wanted = page.locator('[data-testid="wanted-card"]').first();
+  await wanted.locator('[data-testid="attach-original"]').setInputFiles(tmpFile);
+  await expect(page.locator('[data-testid="file-card"]', { hasText: 'Hand added brief' })).toBeVisible({ timeout: 15_000 });
+  const row = page.locator('[data-testid="file-card"]', { hasText: 'Hand added brief' });
+  const downloadPromise = page.waitForEvent('download');
+  await row.locator('.file-dl-btn').click();
+  expect(Buffer.compare(readFileSync(await (await downloadPromise).path()), buf)).toBe(0);
+});
+
+test('saved files survive a restart', async () => {
+  await page.reload();
+  await expect(page.locator('.lib-head h1')).toHaveText('Your files', { timeout: 20_000 });
+  await expect(page.locator('[data-testid="file-card"]', { hasText: 'Reference sheet 8837' })).toBeVisible({ timeout: 15_000 });
+});
+
+test('a lapsed permission is impossible to miss and one click fixes it', async () => {
+  await page.evaluate(() => {
+    let granted = false;
+    window.__atlasTest.injectDirHandle({
+      name: 'Downloads (lapsed)',
+      kind: 'directory',
+      async *values() {},
+      queryPermission: async () => (granted ? 'granted' : 'prompt'),
+      requestPermission: async () => {
+        granted = true;
+        return 'granted';
+      },
+    });
+  });
+  const banner = page.locator('[data-testid="watch-banner"]');
+  await expect(banner).toBeVisible({ timeout: 15_000 });
+  await expect(banner).toContainText('stopped watching');
+  const primary = banner.locator('.primary-btn');
+  await expect(primary).toHaveText('Allow watching again');
+  await primary.click();
+  await expect(banner).toHaveCount(0, { timeout: 15_000 });
+});
+
+test('adding files by hand brings in a whole batch', async () => {
+  const a = await makeClaudeDocx({ title: 'Batch one', created: '2026-06-10T09:00:00.000Z', body: 'One.' });
+  const b = await makeClaudeDocx({ title: 'Batch two', created: '2026-06-11T09:00:00.000Z', body: 'Two.' });
+  const { writeFileSync } = await import('node:fs');
+  writeFileSync(join(TMP, 'batch-one.docx'), a);
+  writeFileSync(join(TMP, 'batch-two.docx'), b);
+  await page.setInputFiles('[data-testid="pick-files"]', [join(TMP, 'batch-one.docx'), join(TMP, 'batch-two.docx')]);
+  await expect(page.locator('[data-testid="file-card"]', { hasText: 'Batch one' })).toBeVisible({ timeout: 15_000 });
+  await expect(page.locator('[data-testid="file-card"]', { hasText: 'Batch two' })).toBeVisible();
+});
+
+test('the auto-save folder receives only real files', async () => {
   await page.evaluate(() => {
     window.__saves = [];
-    const mock = {
+    window.__atlasTest.injectSaveHandle({
       name: 'Chat Atlas Documents (test)',
       queryPermission: async () => 'granted',
       requestPermission: async () => 'granted',
@@ -381,15 +451,18 @@ test('the auto-save folder receives real files', async () => {
           close: async () => {},
         }),
       }),
-    };
-    window.__atlasTest.injectSaveHandle(mock);
+    });
   });
   await expect(page.locator('.savefolder-bar', { hasText: 'Chat Atlas Documents (test)' })).toBeVisible();
   await page.locator('.savefolder-bar .ghost-btn', { hasText: 'Copy all there now' }).click();
   await expect(page.locator('.toast', { hasText: 'to the folder' })).toBeVisible({ timeout: 30_000 });
   const saves = await page.evaluate(() => window.__saves);
-  expect(saves.length).toBeGreaterThanOrEqual(2); // kept originals + rebuilt docx
-  expect(saves.some((s) => s.name === 'acme-logistics-brief.docx')).toBe(true);
+  const storedNames = await page.evaluate(() =>
+    [...document.querySelectorAll('[data-testid="file-card"] .file-card-name')].map((n) => n.textContent),
+  );
+  expect(saves.length).toBeGreaterThan(0);
+  // Nothing invented: every written filename is one we actually hold.
+  expect(saves.every((s) => storedNames.includes(s.name))).toBe(true);
 });
 
 test('the update endpoints and the Update button behave', async () => {

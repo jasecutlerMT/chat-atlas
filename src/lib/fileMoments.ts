@@ -93,10 +93,24 @@ export function normalizeFileKey(nameOrTitle: string): string {
     .replace(/[^a-z0-9]+/g, '');
 }
 
-/** True when a downloaded file's name plausibly refers to the same thing as a title. */
-export function fileKeyMatches(fileName: string, title: string): boolean {
+/**
+ * How strongly a downloaded file's name refers to the same thing as a title,
+ * from 0 (unrelated) to 1 (identical). The shared core must dominate both
+ * strings: without that, a short word like "sydney" would bind a "Sydney trip"
+ * chat to SydneyTechTargetList100.docx.
+ */
+export function fileKeyScore(fileName: string, title: string): number {
   const a = normalizeFileKey(fileName);
   const b = normalizeFileKey(title);
-  if (a.length < 6 || b.length < 6) return a === b && a.length > 0;
-  return a.includes(b) || b.includes(a);
+  if (!a || !b) return 0;
+  if (a === b) return 1;
+  const [short, long] = a.length <= b.length ? [a, b] : [b, a];
+  if (short.length < 10) return 0;
+  if (!long.includes(short)) return 0;
+  return short.length / long.length;
+}
+
+/** True when a downloaded file's name plausibly refers to the same thing as a title. */
+export function fileKeyMatches(fileName: string, title: string): boolean {
+  return fileKeyScore(fileName, title) >= 0.6;
 }

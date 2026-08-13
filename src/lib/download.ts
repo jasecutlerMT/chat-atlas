@@ -18,8 +18,16 @@ export function downloadBlob(blob: Blob, filename: string): void {
   const a = document.createElement('a');
   a.href = url;
   a.download = filename;
+  // Attach before clicking, and release the URL long after: revoking it
+  // straight away can truncate a large download, and handing over the exact
+  // bytes is the whole point of this app.
+  a.style.display = 'none';
+  document.body.appendChild(a);
   a.click();
-  URL.revokeObjectURL(url);
+  setTimeout(() => {
+    a.remove();
+    URL.revokeObjectURL(url);
+  }, 60_000);
 }
 
 export function downloadText(name: string, text: string, ext = '.md', mime = 'text/markdown'): void {

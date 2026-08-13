@@ -1,29 +1,33 @@
-// The Files view: every file Claude made, presented like the download cards
-// in Claude's own chat — a name, a file type, and a Download button. When we
-// hold the exact file you downloaded, that's what you get; otherwise the
-// Download button makes a fresh Word file from the conversation's content.
+// Your files: every PDF and Word document Claude has made, newest first.
+//
+// Two guarantees hold this screen together:
+//   1. A Download button here always hands over the exact bytes Claude made.
+//      The app never invents a document — if the real file is not on this Mac,
+//      the row says so and points back at the chat where it can be downloaded.
+//   2. Every row's date is the moment Claude made the file (read from inside
+//      the file itself where possible), and the row can say where that date
+//      came from.
+//
+// The view deliberately ignores the project/workspace scope: the promise is
+// "every file, ever", and a file that isn't linked to a chat has no scope.
 
 import { useMemo, useRef, useState } from 'react';
 import type { FileMoment, StoredFileMeta } from '../../types';
 import { useStore } from '../../state/store';
-import { formatDate } from '../../lib/text';
-import { exportMoment } from './exporters';
+import { formatDateTime } from '../../lib/text';
 import { ArrowRightIcon, FolderIcon, PaperclipIcon } from '../Icons';
 
-type FileKind = 'PDF' | 'Word' | 'Excel' | 'PowerPoint' | 'File';
+type Ext = 'PDF' | 'Word' | 'File';
 
-function kindOf(name: string | undefined): FileKind {
-  if (!name) return 'Word';
+function extOf(name: string | undefined): Ext {
+  if (!name) return 'File';
   if (/\.pdf$/i.test(name)) return 'PDF';
   if (/\.docx?$/i.test(name)) return 'Word';
-  if (/\.(xlsx?|csv)$/i.test(name)) return 'Excel';
-  if (/\.pptx?$/i.test(name)) return 'PowerPoint';
   return 'File';
 }
 
 function prettyTitle(raw: string): string {
   const base = raw.replace(/\.[a-z0-9]+$/i, '');
-  // "SydneyTechTargetList100" -> "Sydney Tech Target List 100"
   const spaced = base
     .replace(/[-_]+/g, ' ')
     .replace(/([a-z])([A-Z])/g, '$1 $2')
@@ -36,92 +40,155 @@ function prettyTitle(raw: string): string {
     .join(' ');
 }
 
-interface FileRow {
+const DATE_SOURCE_WORDS: Record<string, string> = {
+  'docx-core': 'This is the time recorded inside the file itself.',
+  'pdf-info': 'This is the time recorded inside the file itself.',
+  'pdf-xmp': 'This is the time recorded inside the file itself.',
+  message: 'Taken from the message that delivered it.',
+  'file-mtime': 'Taken from when the file arrived on this Mac.',
+  none: '',
+};
+
+interface SavedRow {
+  kind: 'saved';
   key: string;
+  meta: StoredFileMeta;
+  producedAt: string;
   title: string;
-  kind: FileKind;
-  date: string;
+  ext: Ext;
   convId?: string;
   convName?: string;
-  moment?: FileMoment;
-  original?: StoredFileMeta;
 }
 
-function Row({ row }: { row: FileRow }) {
-  const { downloadOriginal, attachOriginal, removeStoredFile, openConversation } = useStore();
-  const attachRef = useRef<HTMLInputElement>(null);
+function SavedFileRow({ row }: { row: SavedRow }) {
+  const { downloadOriginal, removeStoredFile, openConversation, convMeta, linkFileToConversation, keepReviewedFile } = useStore();
+  const [linking, setLinking] = useState(false);
+  const m = row.meta;
+
+  const status = m.isClaudeMade
+    ? 'Claude’s original file, exactly as you downloaded it.'
+    : m.source === 'attached' || m.source === 'picked' || m.source === 'dropped'
+      ? 'The exact file you added.'
+      : `The exact file from ${m.folderName ?? 'your folder'}.`;
 
   return (
     <article className="file-card" data-testid="file-card">
       <div className="file-card-icon" aria-hidden>
-        <span className={`file-ext file-ext-${row.kind.toLowerCase()}`}>{row.kind === 'Word' ? 'DOC' : row.kind === 'PDF' ? 'PDF' : row.kind.slice(0, 3).toUpperCase()}</span>
+        <span className={`file-ext file-ext-${row.ext.toLowerCase()}`}>{row.ext === 'Word' ? 'DOC' : row.ext === 'PDF' ? 'PDF' : 'FILE'}</span>
       </div>
       <div className="file-card-main">
         <span className="file-card-title">{row.title}</span>
+        <span className="file-card-name">{m.name}</span>
         <span className="file-card-sub">
-          {row.kind} file · {formatDate(row.date)}
+          {row.ext} · <span title={DATE_SOURCE_WORDS[m.producedAtSource ?? 'none']}>{formatDateTime(row.producedAt)}</span>
           {row.convName && (
             <>
               {' · from '}
-              <button className="file-card-convlink" onClick={() => row.convId && openConversation(row.convId, row.moment?.msgId)}>
+              <button className="file-card-convlink" onClick={() => row.convId && openConversation(row.convId, m.linkedMsgId)}>
                 “{row.convName}”
               </button>
             </>
           )}
         </span>
         <span className="file-card-status">
-          {row.original
-            ? '✓ This is the exact file you downloaded from Claude — saved here for good.'
-            : 'The file itself wasn’t saved, so Download makes a fresh copy from the conversation.'}
+          ✓ {status}
+          {m.linkWhy && m.linkMethod !== 'none' && <span className="file-card-why"> {m.linkWhy}</span>}
         </span>
+        {!row.convId && (
+          <span className="file-card-unlinked">
+            Not linked to a chat.{' '}
+            {linking ? (
+              <select
+                autoFocus
+                defaultValue=""
+                onChange={(e) => {
+                  if (e.target.value) void linkFileToConversation(m.id, e.target.value);
+                  setLinking(false);
+                }}
+                onBlur={() => setLinking(false)}
+              >
+                <option value="">Pick a chat…</option>
+                {convMeta.map((c) => (
+                  <option key={c.uuid} value={c.uuid}>
+                    {c.name}
+                  </option>
+                ))}
+              </select>
+            ) : (
+              <button className="link-btn" onClick={() => setLinking(true)}>
+                Link it to a chat…
+              </button>
+            )}
+          </span>
+        )}
       </div>
       <div className="file-card-actions">
-        {row.original ? (
-          <>
-            <button className="primary-btn file-dl-btn" onClick={() => void downloadOriginal(row.original!.id)}>
-              Download
-            </button>
-            <button
-              className="icon-btn"
-              title="Remove this saved file from Chat Atlas"
-              onClick={() => void removeStoredFile(row.original!.id)}
-            >
-              ✕
-            </button>
-          </>
-        ) : row.moment ? (
-          <>
-            <button className="primary-btn file-dl-btn" onClick={() => void exportMoment(row.moment!, 'docx')} title="Makes a Word file from the conversation's content">
-              Download
-            </button>
-            <button className="ghost-btn" onClick={() => void exportMoment(row.moment!, 'pdf')} title="Makes a PDF via Chrome's print dialog">
-              PDF
-            </button>
-            <button
-              className="icon-btn"
-              title="Still have the real file somewhere? Add it here and it's kept for good."
-              onClick={() => attachRef.current?.click()}
-            >
-              <PaperclipIcon size={15} />
-            </button>
-            <input
-              ref={attachRef}
-              type="file"
-              hidden
-              data-testid="attach-original"
-              onChange={(e) => {
-                const f = e.target.files?.[0];
-                if (f && row.moment) void attachOriginal(row.moment, f);
-                e.target.value = '';
-              }}
-            />
-          </>
-        ) : null}
+        <button className="primary-btn file-dl-btn" data-real="1" onClick={() => void downloadOriginal(m.id)}>
+          Download
+        </button>
+        {m.needsReview && (
+          <button className="ghost-btn" title="Keep this file in your library" onClick={() => void keepReviewedFile(m.id)}>
+            Keep
+          </button>
+        )}
+        <button className="icon-btn" title="Remove this file from Chat Atlas" onClick={() => void removeStoredFile(m.id)}>
+          ✕
+        </button>
         {row.convId && (
-          <button className="icon-btn" title="Open the conversation this came from" onClick={() => openConversation(row.convId!, row.moment?.msgId)}>
+          <button className="icon-btn" title="Open the chat this came from" onClick={() => openConversation(row.convId!, m.linkedMsgId)}>
             <ArrowRightIcon size={15} />
           </button>
         )}
+      </div>
+    </article>
+  );
+}
+
+function WantedFileRow({ moment }: { moment: FileMoment }) {
+  const { attachOriginal, openConversation } = useStore();
+  const attachRef = useRef<HTMLInputElement>(null);
+  const name = moment.fileNames[0];
+  const ext = extOf(name);
+
+  return (
+    <article className="file-card file-card-wanted" data-testid="wanted-card">
+      <div className="file-card-icon file-card-icon-ghost" aria-hidden>
+        <span className={`file-ext file-ext-ghost`}>{ext === 'Word' ? 'DOC' : ext === 'PDF' ? 'PDF' : 'FILE'}</span>
+      </div>
+      <div className="file-card-main">
+        <span className="file-card-title">{prettyTitle(name ?? moment.convName)}</span>
+        {name && <span className="file-card-name">{name}</span>}
+        <span className="file-card-sub">
+          {formatDateTime(moment.date)} ·{' '}
+          <button className="file-card-convlink" onClick={() => openConversation(moment.convId, moment.msgId)}>
+            open the chat here
+          </button>
+        </span>
+      </div>
+      <div className="file-card-actions">
+        <a
+          className="secondary-btn file-dl-btn"
+          href={`https://claude.ai/chat/${moment.convId}`}
+          target="_blank"
+          rel="noopener noreferrer"
+          title="Opens this chat on claude.ai, where Claude's own Download button is waiting"
+        >
+          Get it from Claude ↗
+        </a>
+        <button className="icon-btn" title="Already have this file? Add it and it's kept for good." onClick={() => attachRef.current?.click()}>
+          <PaperclipIcon size={15} />
+        </button>
+        <input
+          ref={attachRef}
+          type="file"
+          hidden
+          data-testid="attach-original"
+          onChange={(e) => {
+            const f = e.target.files?.[0];
+            if (f) void attachOriginal(moment, f);
+            e.target.value = '';
+          }}
+        />
       </div>
     </article>
   );
@@ -131,109 +198,253 @@ export function FilesPage() {
   const {
     fileMoments,
     storedFiles,
-    originalsByMoment,
-    scopedConvs,
     convMeta,
     watcherStatus,
     chooseFolder,
+    resumeWatching,
+    rescanFolders,
+    addWatchFolder,
+    scanFolderOnce,
+    addFilesByHand,
+    backfillProgress,
     saveFolderStatus,
     chooseSaveFolder,
     resumeSaveFolder,
     turnOffSaveFolder,
     saveAllToFolder,
     supportsWatching,
-    setLibrarySel,
   } = useStore();
-  const [filter, setFilter] = useState<'all' | 'PDF' | 'Word' | 'other'>('all');
+  const [kindFilter, setKindFilter] = useState<'all' | 'Word' | 'PDF'>('all');
+  const [text, setText] = useState('');
+  const [showReview, setShowReview] = useState(false);
+  const pickRef = useRef<HTMLInputElement>(null);
 
-  const rows = useMemo<FileRow[]>(() => {
-    const convName = new Map(convMeta.map((c) => [c.uuid, c.name]));
-    const scoped = new Set(scopedConvs.map((c) => c.uuid));
-    const usedFiles = new Set<string>();
-    const out: FileRow[] = [];
+  const convName = useMemo(() => new Map(convMeta.map((c) => [c.uuid, c.name])), [convMeta]);
 
-    for (const m of fileMoments) {
-      if (!scoped.has(m.convId)) continue;
-      const original = originalsByMoment.get(m.id);
-      if (original) usedFiles.add(original.id);
-      const displayName = original?.name ?? m.fileNames[0];
-      out.push({
-        key: `m-${m.id}`,
-        title: prettyTitle(displayName ?? m.convName),
-        kind: kindOf(displayName),
-        date: m.date,
-        convId: m.convId,
-        convName: m.convName,
-        moment: m,
-        original,
-      });
-    }
-    // Files kept from the folder that didn't match a specific moment.
-    for (const f of storedFiles) {
-      if (usedFiles.has(f.id)) continue;
-      out.push({
+  const savedRows = useMemo<SavedRow[]>(() => {
+    const rows = storedFiles
+      .filter((f) => !f.needsReview)
+      .map<SavedRow>((f) => ({
+        kind: 'saved',
         key: `f-${f.id}`,
-        title: prettyTitle(f.name),
-        kind: kindOf(f.name),
-        date: f.capturedAt,
+        meta: f,
+        producedAt: f.producedAt ?? f.capturedAt,
+        title: f.docTitle?.trim() || prettyTitle(f.name),
+        ext: extOf(f.name),
         convId: f.linkedConvId,
         convName: f.linkedConvId ? convName.get(f.linkedConvId) : undefined,
-        original: f,
-      });
-    }
-    out.sort((a, b) => (a.date < b.date ? 1 : -1));
-    if (filter === 'all') return out;
-    if (filter === 'other') return out.filter((r) => r.kind !== 'PDF' && r.kind !== 'Word');
-    return out.filter((r) => r.kind === filter);
-  }, [fileMoments, storedFiles, originalsByMoment, scopedConvs, convMeta, filter]);
+      }));
+    rows.sort((a, b) => (a.producedAt < b.producedAt ? 1 : -1));
+    return rows;
+  }, [storedFiles, convName]);
 
-  const savedCount = rows.filter((r) => r.original).length;
+  const reviewRows = useMemo(() => storedFiles.filter((f) => f.needsReview), [storedFiles]);
+
+  const visibleSaved = useMemo(() => {
+    const q = text.trim().toLowerCase();
+    return savedRows.filter((r) => {
+      if (kindFilter !== 'all' && r.ext !== kindFilter) return false;
+      if (!q) return true;
+      return `${r.title} ${r.meta.name} ${r.meta.docDescription ?? ''} ${r.convName ?? ''}`.toLowerCase().includes(q);
+    });
+  }, [savedRows, kindFilter, text]);
+
+  // Files Claude made whose bytes are not on this Mac, grouped by chat so one
+  // visit to a conversation collects everything from it at once.
+  const wantedByChat = useMemo(() => {
+    const haveMoment = new Set(storedFiles.map((f) => f.linkedMomentId).filter(Boolean) as string[]);
+    const groups = new Map<string, { convId: string; convName: string; moments: FileMoment[] }>();
+    for (const m of fileMoments) {
+      if (haveMoment.has(m.id)) continue;
+      const g = groups.get(m.convId) ?? { convId: m.convId, convName: m.convName, moments: [] };
+      g.moments.push(m);
+      groups.set(m.convId, g);
+    }
+    return [...groups.values()].sort((a, b) => (a.moments[0].date < b.moments[0].date ? 1 : -1));
+  }, [fileMoments, storedFiles]);
+
+  const wantedCount = wantedByChat.reduce((n, g) => n + g.moments.length, 0);
+  const totalKnown = savedRows.length + wantedCount;
 
   return (
     <>
-      {watcherStatus.state === 'watching' ? (
-        <p className="files-hint">
-          Chat Atlas is watching <strong>{watcherStatus.folderName}</strong>. Any PDF or Word file you download from Claude into that
-          folder is saved here automatically, for good.
-        </p>
-      ) : supportsWatching ? (
-        <p className="files-hint">
-          <button className="link-btn" onClick={() => void chooseFolder()}>
-            Choose the folder your Claude downloads land in
-          </button>{' '}
-          and every file you download gets saved here automatically.
-        </p>
-      ) : null}
+      {/* The single most important state on this screen: is anything being saved at all? */}
+      {watcherStatus.state === 'needs-permission' && (
+        <div className="watch-banner watch-banner-warn" data-testid="watch-banner">
+          <div>
+            <strong>Chat Atlas has stopped watching {watcherStatus.lapsed.map((f) => f.name).join(', ')}.</strong>
+            <p>Nothing new is being saved. One click puts it right.</p>
+          </div>
+          <div className="watch-banner-actions">
+            <button className="primary-btn" onClick={() => void resumeWatching()}>
+              Allow watching again
+            </button>
+            <button className="link-btn" onClick={() => void addWatchFolder()}>
+              Pick a different folder
+            </button>
+          </div>
+        </div>
+      )}
+      {watcherStatus.state === 'off' && supportsWatching && (
+        <div className="watch-banner" data-testid="watch-banner">
+          <div>
+            <strong>Chat Atlas isn’t watching a folder yet.</strong>
+            <p>Point it at the folder your Claude downloads land in, and every file you download is saved here automatically.</p>
+          </div>
+          <div className="watch-banner-actions">
+            <button className="primary-btn" onClick={() => void chooseFolder()}>
+              Choose that folder
+            </button>
+          </div>
+        </div>
+      )}
+      {watcherStatus.state === 'unsupported' && (
+        <div className="watch-banner" data-testid="watch-banner">
+          <div>
+            <strong>Automatic saving needs the Chrome browser.</strong>
+            <p>Everything else works here — use “Add files I already have” to bring your files in.</p>
+          </div>
+        </div>
+      )}
 
-      <div className="chip-row chip-row-static">
-        <button className={`chip ${filter === 'all' ? 'chip-on' : ''}`} onClick={() => setFilter('all')}>
-          All · {rows.length}
-        </button>
-        <button className={`chip ${filter === 'PDF' ? 'chip-on' : ''}`} onClick={() => setFilter('PDF')}>
-          PDF
-        </button>
-        <button className={`chip ${filter === 'Word' ? 'chip-on' : ''}`} onClick={() => setFilter('Word')}>
-          Word
-        </button>
-        <button className={`chip ${filter === 'other' ? 'chip-on' : ''}`} onClick={() => setFilter('other')}>
-          Other
-        </button>
+      <div className="files-toolbar">
+        <div className="chip-row chip-row-static">
+          <button className={`chip ${kindFilter === 'all' ? 'chip-on' : ''}`} onClick={() => setKindFilter('all')}>
+            All · {savedRows.length}
+          </button>
+          <button className={`chip ${kindFilter === 'Word' ? 'chip-on' : ''}`} onClick={() => setKindFilter('Word')}>
+            Word
+          </button>
+          <button className={`chip ${kindFilter === 'PDF' ? 'chip-on' : ''}`} onClick={() => setKindFilter('PDF')}>
+            PDF
+          </button>
+        </div>
+        <input
+          type="search"
+          className="files-filter"
+          placeholder="Find a file by name…"
+          value={text}
+          onChange={(e) => setText(e.target.value)}
+          aria-label="Find a file"
+        />
       </div>
 
-      {rows.length === 0 ? (
+      <div className="files-actions">
+        <button className="ghost-btn" onClick={() => pickRef.current?.click()}>
+          Add files I already have
+        </button>
+        <input
+          ref={pickRef}
+          type="file"
+          multiple
+          hidden
+          accept=".pdf,.doc,.docx"
+          data-testid="pick-files"
+          onChange={(e) => {
+            const files = Array.from(e.target.files ?? []);
+            if (files.length) void addFilesByHand(files, { source: 'picked' });
+            e.target.value = '';
+          }}
+        />
+        {supportsWatching && (
+          <>
+            <button className="ghost-btn" onClick={() => void scanFolderOnce()}>
+              Scan a folder once
+            </button>
+            <button className="ghost-btn" onClick={() => void addWatchFolder()}>
+              Watch another folder
+            </button>
+            <button className="ghost-btn" onClick={() => void rescanFolders()}>
+              Rescan folders now
+            </button>
+          </>
+        )}
+        {watcherStatus.state === 'watching' && (
+          <span className="files-watching-note">
+            Watching {watcherStatus.folders.map((f) => f.name).join(', ')} — new downloads save themselves.
+          </span>
+        )}
+      </div>
+
+      {backfillProgress && (
+        <p className="files-hint">
+          Reading file details… {backfillProgress.done} of {backfillProgress.total}
+        </p>
+      )}
+
+      {visibleSaved.length === 0 && savedRows.length === 0 ? (
         <div className="view-empty">
           <p>
-            <strong>No files here yet.</strong> When Claude makes you a PDF or Word document, download it as usual — if Chat Atlas is
-            watching your download folder, the file lands here by itself, ready to find and re-download forever. Everything else Claude
-            wrote lives in your{' '}
-            <button className="link-btn" onClick={() => setLibrarySel({ kind: 'home' })}>
-              library
-            </button>
-            .
+            <strong>No files saved yet.</strong> When Claude makes you a PDF or Word document, download it as you normally would — if
+            Chat Atlas is watching that folder, the exact file lands here by itself, ready to download again forever.
           </p>
         </div>
       ) : (
-        rows.map((r) => <Row key={r.key} row={r} />)
+        visibleSaved.map((r) => <SavedFileRow key={r.key} row={r} />)
+      )}
+
+      {wantedByChat.length > 0 && (
+        <>
+          <h2 className="lib-section-head" data-testid="wanted-head">
+            Claude made these — not on this Mac yet ({wantedCount})
+          </h2>
+          <p className="files-hint">
+            {savedRows.length} of {totalKnown} files saved. Open a chat below and download from there — Claude's own “Download all” gets
+            every file from that chat at once, and they appear here by themselves.
+          </p>
+          {wantedByChat.map((g) => (
+            <section key={g.convId} className="wanted-group">
+              <header className="wanted-group-head">
+                <span className="wanted-group-name">{g.convName}</span>
+                <a
+                  className="ghost-btn"
+                  href={`https://claude.ai/chat/${g.convId}`}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  title="Opens this chat on claude.ai"
+                >
+                  Open this chat ↗ ({g.moments.length})
+                </a>
+              </header>
+              {g.moments.map((m) => (
+                <WantedFileRow key={m.id} moment={m} />
+              ))}
+            </section>
+          ))}
+        </>
+      )}
+
+      {reviewRows.length > 0 && (
+        <>
+          <h2 className="lib-section-head">
+            <button className="link-btn" onClick={() => setShowReview((s) => !s)}>
+              Files Chat Atlas isn’t sure about ({reviewRows.length}) {showReview ? '▾' : '▸'}
+            </button>
+          </h2>
+          {showReview && (
+            <>
+              <p className="files-hint">
+                These were saved by an older version and don’t look like Claude’s work. Nothing is deleted automatically — keep or remove
+                them yourself.
+              </p>
+              {reviewRows.map((f) => (
+                <SavedFileRow
+                  key={`r-${f.id}`}
+                  row={{
+                    kind: 'saved',
+                    key: `r-${f.id}`,
+                    meta: f,
+                    producedAt: f.producedAt ?? f.capturedAt,
+                    title: f.docTitle?.trim() || prettyTitle(f.name),
+                    ext: extOf(f.name),
+                    convId: f.linkedConvId,
+                    convName: f.linkedConvId ? convName.get(f.linkedConvId) : undefined,
+                  }}
+                />
+              ))}
+            </>
+          )}
+        </>
       )}
 
       <div className="savefolder-bar">
@@ -241,9 +452,9 @@ export function FilesPage() {
         {saveFolderStatus.state === 'on' ? (
           <>
             <span>
-              Copies of everything here also go into <strong>{saveFolderStatus.folderName}</strong> on your Mac.
+              Copies of these files also go into <strong>{saveFolderStatus.folderName}</strong>.
             </span>
-            <button className="ghost-btn" onClick={() => void saveAllToFolder()} title="Write every file listed here into that folder now">
+            <button className="ghost-btn" onClick={() => void saveAllToFolder()}>
               Copy all there now
             </button>
             <button className="link-btn" onClick={() => void turnOffSaveFolder()}>
@@ -266,9 +477,7 @@ export function FilesPage() {
               Choose a folder
             </button>
           </>
-        ) : (
-          <span>{savedCount} of these are exact saved files; the rest are made fresh when you download them.</span>
-        )}
+        ) : null}
       </div>
     </>
   );

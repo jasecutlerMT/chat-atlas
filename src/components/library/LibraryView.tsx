@@ -272,9 +272,9 @@ export function LibraryView() {
               <button
                 className="secondary-btn"
                 onClick={() => setCompile({ title: heading, subtitle: sub || undefined, cards: compilable })}
-                title="Combine everything shown here into one Word or PDF document"
+                title="Builds a brand-new document from what Claude wrote in these chats — not a copy of a file Claude gave you"
               >
-                Make one document
+                Combine into a new document
               </button>
             )}
           </header>

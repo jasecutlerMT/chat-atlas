@@ -39,14 +39,15 @@ export function CompileDialog({
     <div className="modal-backdrop" onClick={onClose}>
       <div className="modal compile-modal" onClick={(e) => e.stopPropagation()}>
         <header className="modal-head">
-          <h2>Make one document</h2>
+          <h2>Combine these into a new document</h2>
           <button className="icon-btn" aria-label="Close" onClick={onClose}>
             <CloseIcon size={17} />
           </button>
         </header>
         <p className="modal-sub">
-          These {order.length} item{order.length === 1 ? '' : 's'} become a single tidy file with a cover and contents page. Reorder them if
-          you like, then pick a format.
+          This makes a brand-new file out of what Claude wrote in your chats. It is not one of the original files Claude gave you — those
+          all live under <strong>Your files</strong>. These {order.length} item{order.length === 1 ? '' : 's'} become one tidy file with a
+          cover and contents page. Reorder them if you like, then pick a format.
         </p>
         <input className="ws-name" value={title} onChange={(e) => setTitle(e.target.value)} aria-label="Document title" />
         <div className="compile-list">

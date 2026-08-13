@@ -5,7 +5,6 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { useStore } from '../state/store';
 import { formatDate } from '../lib/text';
 import { normalizeFileKey } from '../lib/fileMoments';
-import { exportMoment } from './library/exporters';
 import { CloseIcon, PaperclipIcon, SearchIcon } from './Icons';
 
 export function SearchBar() {
@@ -70,7 +69,10 @@ export function SearchBar() {
     const words = q.split(/\s+/).filter(Boolean);
     const matches = (hay: string) =>
       words.every((w) => hay.includes(w)) || (qKey.length >= 3 && normalizeFileKey(hay).includes(qKey));
-    const out: { key: string; label: string; sub: string; download: () => void }[] = [];
+    // Only real, saved files get a Download here. A file Claude made that
+    // isn't on this Mac is shown as a pointer back to its chat — never as a
+    // made-up document.
+    const out: { key: string; label: string; sub: string; download?: () => void; convId?: string }[] = [];
     for (const m of fileMoments) {
       const hay = `${m.fileNames.join(' ')} ${m.convName}`.toLowerCase();
       if (!matches(hay)) continue;
@@ -78,11 +80,9 @@ export function SearchBar() {
       out.push({
         key: m.id,
         label: (original?.name ?? m.fileNames[0] ?? m.convName).replace(/\.[a-z0-9]+$/i, ''),
-        sub: original ? 'exact saved file' : 'made fresh as Word',
-        download: () => {
-          if (original) void downloadOriginal(original.id);
-          else void exportMoment(m, 'docx');
-        },
+        sub: original ? 'saved on this Mac' : 'not saved yet — open the chat to get it',
+        download: original ? () => void downloadOriginal(original.id) : undefined,
+        convId: m.convId,
       });
       if (out.length >= 3) return out;
     }
@@ -92,8 +92,9 @@ export function SearchBar() {
       out.push({
         key: f.id,
         label: f.name,
-        sub: 'exact saved file',
+        sub: 'saved on this Mac',
         download: () => void downloadOriginal(f.id),
+        convId: f.linkedConvId,
       });
       if (out.length >= 3) break;
     }
@@ -207,9 +208,20 @@ export function SearchBar() {
                   <span className="result-file-label">
                     📄 {f.label} <span className="result-file-sub">{f.sub}</span>
                   </span>
-                  <button className="primary-btn result-file-dl" onClick={f.download}>
-                    Download
-                  </button>
+                  {f.download ? (
+                    <button className="primary-btn result-file-dl" data-real="1" onClick={f.download}>
+                      Download
+                    </button>
+                  ) : (
+                    <a
+                      className="ghost-btn result-file-dl"
+                      href={`https://claude.ai/chat/${f.convId}`}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                    >
+                      Get it from Claude ↗
+                    </a>
+                  )}
                 </div>
               ))}
             </div>

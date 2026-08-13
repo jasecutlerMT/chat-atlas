@@ -19,6 +19,14 @@ export interface ChatMessage {
   hasTable: boolean;
   isLong: boolean;
   hasAttachment: boolean;
+  /**
+   * What Claude passed to a tool — usually the full text of a document it was
+   * building. Used to match a downloaded file to its chat and to preview what
+   * a file contained. Never offered as a downloadable document.
+   */
+  toolText?: string;
+  /** Artifact or file titles seen inside tool calls. */
+  toolTitles?: string[];
 }
 
 export interface Conversation {
@@ -110,16 +118,52 @@ export interface FileMoment {
   asked: boolean;
 }
 
-/** A real file kept forever in the local archive (captured from Downloads or attached by hand). */
+/** How a stored file came to be linked to a conversation. */
+export type LinkMethod = 'filename' | 'title' | 'time' | 'content' | 'manual' | 'none';
+
+/** A real file kept forever in the local archive (captured from a folder or added by hand). */
 export interface StoredFileMeta {
   id: string;
   name: string;
   size: number;
   lastModified: number;
   capturedAt: string;
-  source: 'watched' | 'attached';
+  source: 'watched' | 'attached' | 'picked' | 'dropped';
   linkedMomentId?: string;
   linkedConvId?: string;
+  linkedMsgId?: string;
+
+  // What the file says about itself (see lib/fileIdentity.ts).
+  /** When Claude made it — the only honest answer to "when did I get this?". */
+  producedAt?: string;
+  producedAtSource?: 'docx-core' | 'pdf-info' | 'pdf-xmp' | 'message' | 'file-mtime' | 'none';
+  docTitle?: string;
+  docDescription?: string;
+  isClaudeMade?: boolean;
+  claudeScore?: number;
+  identitySignals?: string[];
+  identityVersion?: number;
+
+  // How it found its conversation.
+  linkMethod?: LinkMethod;
+  linkConfidence?: number;
+  linkWhy?: string;
+
+  /** Where it was found, for the user's own orientation. */
+  folderName?: string;
+  relPath?: string;
+  /** Set when the file is neither recognisably Claude's nor linked to a chat. */
+  needsReview?: boolean;
+}
+
+/** One assistant message's timestamp, used to match a file to the chat that produced it. */
+export interface MsgStamp {
+  convId: string;
+  convName: string;
+  msgId: string;
+  date: string;
+  words: number;
+  isMoment: boolean;
 }
 
 export interface Collection {

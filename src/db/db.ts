@@ -14,6 +14,7 @@ import type {
   FileMoment,
   GraphEdge,
   LibraryItemRef,
+  MsgStamp,
   OutputCard,
   SkippedItem,
   StoredFileMeta,
@@ -69,7 +70,7 @@ export async function setMeta(key: string, value: unknown): Promise<void> {
 
 // ---- derived ----
 
-export const DERIVED_SCHEMA_VERSION = 4;
+export const DERIVED_SCHEMA_VERSION = 5;
 
 export interface DerivedBundle {
   schemaVersion?: number;
@@ -78,8 +79,10 @@ export interface DerivedBundle {
   outputs: OutputCard[];
   entities?: Entity[];
   fileMoments?: FileMoment[];
-  /** Doc-like filenames mentioned anywhere; the watcher's original-capture list. */
+  /** Doc-like filenames mentioned anywhere; used to link a captured file to its chat. */
   referencedFiles?: string[];
+  /** Assistant message timestamps, so a file can be matched to the chat that was live when Claude made it. */
+  msgStamps?: MsgStamp[];
 }
 
 export async function getDerived(): Promise<DerivedBundle | undefined> {
