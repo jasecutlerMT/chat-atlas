@@ -1,5 +1,5 @@
 {
-  "version": 7,
-  "label": "Only Claude's real files, newest first, exactly as he made them",
+  "version": 8,
+  "label": "You can always see how fresh this page is — and only Word & PDF files, once each",
   "note": "Bump 'version' on every release and push the mirror (see scripts/publish-mirror.sh). The in-app Update button compares this number with the public mirror's copy."
 }

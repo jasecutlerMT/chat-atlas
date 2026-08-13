@@ -83,6 +83,11 @@ this app must never hold. So:
   `export-8837.docx` still finds its chat, by the minute it was made).
   Anything that isn't Claude's — your own Word documents, a bank statement
   in the same folder — is left alone, silently.
+- **The page tells you how fresh it is.** A line at the top says which date
+  your chats are known up to, and **Bring in my newest chats** walks you
+  through the one-minute export that catches it up (new chats can only reach
+  the app through Claude's export — fetching them directly would need your
+  Claude login, which this app must never hold).
 - **Files you haven't downloaded yet are still listed**, grouped by chat,
   with a **Get it from Claude** button that opens that exact conversation.
   Claude's own "Download all" there collects every file from that chat at

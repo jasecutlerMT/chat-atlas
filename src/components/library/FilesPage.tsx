@@ -14,7 +14,8 @@
 import { useMemo, useRef, useState } from 'react';
 import type { FileMoment, StoredFileMeta } from '../../types';
 import { useStore } from '../../state/store';
-import { formatDateTime } from '../../lib/text';
+import { daysBetween, formatDate, formatDateTime } from '../../lib/text';
+import { fileKeyMatches, normalizeFileKey } from '../../lib/fileMoments';
 import { ArrowRightIcon, FolderIcon, PaperclipIcon } from '../Icons';
 
 type Ext = 'PDF' | 'Word' | 'File';
@@ -38,6 +39,15 @@ function prettyTitle(raw: string): string {
     .split(' ')
     .map((w) => (w === w.toUpperCase() ? w : w.charAt(0).toUpperCase() + w.slice(1)))
     .join(' ');
+}
+
+/** "today", "yesterday", "5 days ago" — or the plain date once it's far back. */
+function friendlyWhen(iso: string): string {
+  const days = daysBetween(iso);
+  if (days <= 0) return 'today';
+  if (days === 1) return 'yesterday';
+  if (days <= 30) return `${days} days ago`;
+  return formatDate(iso);
 }
 
 const DATE_SOURCE_WORDS: Record<string, string> = {
@@ -213,10 +223,13 @@ export function FilesPage() {
     turnOffSaveFolder,
     saveAllToFolder,
     supportsWatching,
+    lastImportAt,
+    newestDataAt,
   } = useStore();
   const [kindFilter, setKindFilter] = useState<'all' | 'Word' | 'PDF'>('all');
   const [text, setText] = useState('');
   const [showReview, setShowReview] = useState(false);
+  const [showUpdate, setShowUpdate] = useState(false);
   const pickRef = useRef<HTMLInputElement>(null);
 
   const convName = useMemo(() => new Map(convMeta.map((c) => [c.uuid, c.name])), [convMeta]);
@@ -250,13 +263,29 @@ export function FilesPage() {
   }, [savedRows, kindFilter, text]);
 
   // Files Claude made whose bytes are not on this Mac, grouped by chat so one
-  // visit to a conversation collects everything from it at once.
+  // visit to a conversation collects everything from it at once. The same file
+  // is often announced in several messages of one chat — that's one file, so
+  // it gets one row (the newest mention; fileMoments arrives newest-first).
   const wantedByChat = useMemo(() => {
     const haveMoment = new Set(storedFiles.map((f) => f.linkedMomentId).filter(Boolean) as string[]);
-    const groups = new Map<string, { convId: string; convName: string; moments: FileMoment[] }>();
+    const savedInConv = new Map<string, string[]>();
+    for (const f of storedFiles) {
+      if (!f.linkedConvId) continue;
+      const names = savedInConv.get(f.linkedConvId) ?? [];
+      names.push(f.name);
+      if (f.docTitle) names.push(f.docTitle);
+      savedInConv.set(f.linkedConvId, names);
+    }
+    const groups = new Map<string, { convId: string; convName: string; moments: FileMoment[]; seen: Set<string> }>();
     for (const m of fileMoments) {
       if (haveMoment.has(m.id)) continue;
-      const g = groups.get(m.convId) ?? { convId: m.convId, convName: m.convName, moments: [] };
+      const label = m.fileNames[0] ?? m.convName;
+      // Already saved from this chat under this name? Then it isn't wanted.
+      if ((savedInConv.get(m.convId) ?? []).some((saved) => fileKeyMatches(saved, label))) continue;
+      const g = groups.get(m.convId) ?? { convId: m.convId, convName: m.convName, moments: [], seen: new Set<string>() };
+      const key = normalizeFileKey(label);
+      if (g.seen.has(key)) continue;
+      g.seen.add(key);
       g.moments.push(m);
       groups.set(m.convId, g);
     }
@@ -304,6 +333,75 @@ export function FilesPage() {
             <strong>Automatic saving needs the Chrome browser.</strong>
             <p>Everything else works here — use “Add files I already have” to bring your files in.</p>
           </div>
+        </div>
+      )}
+
+      {newestDataAt && (
+        <div
+          className={`files-freshness ${daysBetween(newestDataAt) > 14 ? 'files-freshness-stale' : ''}`}
+          data-testid="files-freshness"
+        >
+          <span>
+            This page knows about your chats up to{' '}
+            <strong title={formatDateTime(newestDataAt)}>{friendlyWhen(newestDataAt)}</strong>
+            {lastImportAt && (
+              <span title={formatDateTime(lastImportAt)}> (your last export was brought in {friendlyWhen(lastImportAt)})</span>
+            )}
+            . Files you download from Claude appear here by themselves.
+          </span>
+          <button className="ghost-btn" data-testid="update-files-btn" onClick={() => setShowUpdate((s) => !s)}>
+            Bring in my newest chats
+          </button>
+        </div>
+      )}
+      {showUpdate && (
+        <div className="update-files-panel" data-testid="update-files-panel">
+          <p>
+            <strong>Two kinds of “new” — one is already automatic.</strong>
+          </p>
+          <p>
+            Any file you <strong>download</strong> from Claude lands on this page by itself, within about half a minute — as long as the
+            green “Watching” light is on at the top. Nothing to click.
+          </p>
+          <p>
+            But files from <strong>chats you’ve had since your last export</strong> can’t be seen yet. No app can reach into your Claude
+            account — that would need your Claude password, which this app must never have. Claude only shares your chats through its
+            export, and that takes one minute:
+          </p>
+          <ol>
+            <li>
+              <a
+                className="secondary-btn"
+                href="https://claude.ai/settings/data-privacy-controls"
+                target="_blank"
+                rel="noopener noreferrer"
+                data-testid="open-export-page"
+              >
+                Open Claude’s export page ↗
+              </a>{' '}
+              and click <strong>Export data</strong>.
+            </li>
+            <li>Claude emails you a link — click it and the download starts, like any file.</li>
+            <li>That’s it. Chat Atlas notices the download and this page updates itself.</li>
+          </ol>
+          {watcherStatus.state !== 'watching' && supportsWatching && (
+            <p className="update-files-warn">
+              One thing first: the folder watcher is off right now, so the download won’t be noticed.{' '}
+              {watcherStatus.state === 'needs-permission' ? (
+                <button className="link-btn" onClick={() => void resumeWatching()}>
+                  Allow watching again
+                </button>
+              ) : (
+                <button className="link-btn" onClick={() => void chooseFolder()}>
+                  Choose your downloads folder
+                </button>
+              )}{' '}
+              — or drag the downloaded zip anywhere onto this window instead.
+            </p>
+          )}
+          <button className="link-btn" onClick={() => setShowUpdate(false)}>
+            Close
+          </button>
         </div>
       )}
 

@@ -6,10 +6,17 @@
 import type { Conversation, FileMoment } from '../types';
 import { countWords } from './text';
 
-const DOC_EXT = /\.(pdf|docx?|xlsx?|pptx?|csv|md|rtf)\b/i;
+// Only the files Jason actually asked to be made: Word documents and PDFs.
+// Everything else a chat happens to mention (.md notes, spreadsheets, code
+// files) must never appear on the Your files screen.
+const DOC_EXT = /\.(pdf|docx?)\b/i;
 // No spaces: generated filenames are slug-like; allowing spaces would swallow
 // the words before the name ("ve created northwind-plan.pdf").
-const FILENAME_RE = /[\w][\w.-]{0,80}\.(pdf|docx?|xlsx?|pptx?|csv|md|rtf)\b/gi;
+const FILENAME_RE = /[\w][\w.-]{0,80}\.(pdf|docx?)\b/gi;
+// Files that get named but are not documents (markdown notes, spreadsheets,
+// data files). When a message announces "your file" and the only files it
+// names are these, the announcement was about them — not a hidden PDF.
+const OTHER_FILE_RE = /[\w][\w.-]{0,80}\.(xlsx?|pptx?|csv|md|rtf|txt|json|html?)\b/i;
 
 /** Human asking for a file. */
 const ASK_RE =
@@ -36,11 +43,12 @@ export function detectFileMoments(convs: Conversation[]): FileMoment[] {
       const fileRefs = m.fileNames.filter((f) => DOC_EXT.test(f));
       const namedInText = filenamesIn(m.text);
       const announced = MADE_RE.test(m.text);
+      const namedOther = OTHER_FILE_RE.test(m.text) || m.fileNames.some((f) => OTHER_FILE_RE.test(f));
       // Did any earlier human message ask for a file? (The ask and the file
       // often sit a couple of messages apart: ask → draft → "make it a file".)
       const asked = msgs.slice(0, i).some((x) => x.sender === 'human' && (ASK_RE.test(x.text) || filenamesIn(x.text).length > 0));
 
-      if (fileRefs.length === 0 && namedInText.length === 0 && !(announced && asked)) continue;
+      if (fileRefs.length === 0 && namedInText.length === 0 && !(announced && asked && !namedOther)) continue;
 
       // The message with the file card is often just "here you go" — the
       // substance usually lives in it or in the nearest meaty assistant

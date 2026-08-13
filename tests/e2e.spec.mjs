@@ -289,6 +289,9 @@ test('old stored data is upgraded in place (no re-import needed)', async () => {
   });
   await page.reload();
   await expect(page.locator('.side-entity', { hasText: 'Acme Logistics' })).toBeVisible({ timeout: 30_000 });
+  // The upgrade's progress card must clear itself once the work is done —
+  // it once sat on "Finding the files you asked for…" forever.
+  await expect(page.locator('.progress-card')).toHaveCount(0, { timeout: 15_000 });
 });
 
 test('Your files shows only real saved files, newest first, with the time', async () => {
@@ -380,6 +383,34 @@ test('files Claude made that are not on this Mac are listed by chat, with no fak
   const group = page.locator('.wanted-group-head a').first();
   expect(await group.getAttribute('href')).toMatch(/^https:\/\/claude\.ai\/chat\//);
   expect(await group.getAttribute('rel')).toContain('noopener');
+});
+
+test('a document announced twice is one row, and markdown files never appear', async () => {
+  // The Docusign chat announces docusign-deep-dive.docx in two messages —
+  // that's one file, so it gets one row.
+  await expect(page.locator('[data-testid="wanted-card"]', { hasText: 'docusign-deep-dive.docx' })).toHaveCount(1);
+  // The openclaw chat produced only SKILL.md and data.csv — not Word or PDF —
+  // so it leaves no trace on this screen, not even a nameless row.
+  expect(await page.getByText('SKILL.md').count()).toBe(0);
+  expect(await page.getByText('data.csv').count()).toBe(0);
+  expect(await page.locator('.wanted-group', { hasText: 'Openclaw skill notes' }).count()).toBe(0);
+});
+
+test('the page says how fresh it is, and walks through bringing in newer chats', async () => {
+  const fresh = page.locator('[data-testid="files-freshness"]');
+  await expect(fresh).toBeVisible();
+  await expect(fresh).toContainText('This page knows about your chats up to');
+  await page.locator('[data-testid="update-files-btn"]').click();
+  const panel = page.locator('[data-testid="update-files-panel"]');
+  await expect(panel).toBeVisible();
+  await expect(panel).toContainText('already automatic');
+  // The one manual step is a plain link to Claude's own export page — the app
+  // itself never reaches into the user's Claude account.
+  const link = panel.locator('[data-testid="open-export-page"]');
+  expect(await link.getAttribute('href')).toBe('https://claude.ai/settings/data-privacy-controls');
+  expect(await link.getAttribute('rel')).toContain('noopener');
+  await panel.locator('.link-btn', { hasText: 'Close' }).click();
+  await expect(panel).toHaveCount(0);
 });
 
 test('an original can be added by hand to a file that is missing', async () => {

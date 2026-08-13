@@ -364,6 +364,8 @@ export function StoreProvider({ children }: { children: ReactNode }) {
           setMatchedConvIds(new Set(m.matchedConvIds));
         }
       } else if (m.t === 'rebuilt') {
+        // The rebuild's own progress card must never outlive the work.
+        setProgress(null);
         void reloadDerived();
       } else if (m.t === 'error') {
         setProgress(null);

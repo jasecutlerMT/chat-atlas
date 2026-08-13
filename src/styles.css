@@ -2358,6 +2358,55 @@ input[type='range'] {
   flex-shrink: 0;
 }
 
+.files-freshness {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 14px;
+  flex-wrap: wrap;
+  padding: 10px 16px;
+  margin-bottom: 12px;
+  border-radius: 12px;
+  background: var(--bg-elev);
+  border: 1px solid var(--border);
+  font-size: 13px;
+  color: var(--text-muted);
+}
+
+.files-freshness strong {
+  color: var(--text);
+}
+
+.files-freshness-stale {
+  border-color: var(--accent);
+}
+
+.update-files-panel {
+  padding: 16px 20px;
+  margin-bottom: 14px;
+  border-radius: 14px;
+  background: var(--bg-elev);
+  border: 1px solid var(--border);
+  font-size: 14px;
+}
+
+.update-files-panel p {
+  margin: 0 0 10px;
+}
+
+.update-files-panel ol {
+  margin: 0 0 12px;
+  padding-left: 22px;
+}
+
+.update-files-panel li {
+  margin-bottom: 8px;
+}
+
+.update-files-warn {
+  color: var(--accent);
+}
+
 .files-toolbar {
   display: flex;
   align-items: center;

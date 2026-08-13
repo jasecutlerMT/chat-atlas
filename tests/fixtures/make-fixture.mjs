@@ -302,6 +302,37 @@ export async function makeFixtures() {
       ),
       msg('assistant', 'Your files are ready to download above.', '2026-06-28T09:06:00.000000Z'),
     ]),
+    // The same document announced in two separate messages — one file, and it
+    // must appear as ONE row in the "not on this Mac yet" list.
+    conv(15, 'Docusign deep dive for the team', '2026-06-27T10:00:00.000000Z', '2026-06-27T10:30:00.000000Z', [
+      msg('human', 'Turn the Docusign deep dive into a Word document file I can share with the team.', '2026-06-27T10:00:00.000000Z'),
+      (() => {
+        const m = msg('assistant', "I've created docusign-deep-dive.docx — the full deep dive, ready to download above.", '2026-06-27T10:05:00.000000Z');
+        m.files = [{ file_name: 'docusign-deep-dive.docx' }];
+        return m;
+      })(),
+      msg('human', 'The download stopped halfway. Can you give me the file again?', '2026-06-27T10:10:00.000000Z'),
+      (() => {
+        const m = msg('assistant', 'Here is docusign-deep-dive.docx again — the same document, ready to download.', '2026-06-27T10:12:00.000000Z');
+        m.files = [{ file_name: 'docusign-deep-dive.docx' }];
+        return m;
+      })(),
+    ]),
+    // A chat whose only "files" are markdown and CSV. Jason only ever wants
+    // Word documents and PDFs on the Your files screen, so this chat must
+    // leave no trace there — not even a nameless "Claude made a file" row.
+    conv(16, 'Openclaw skill notes', '2026-06-24T15:00:00.000000Z', '2026-06-24T15:20:00.000000Z', [
+      msg('human', 'Package the openclaw skill up for me — save it as a document file if that works best.', '2026-06-24T15:00:00.000000Z'),
+      (() => {
+        const m = msg(
+          'assistant',
+          "I've created SKILL.md — a markdown file with everything the skill needs, plus data.csv holding the numbers.",
+          '2026-06-24T15:05:00.000000Z',
+        );
+        m.files = [{ file_name: 'SKILL.md' }, { file_name: 'data.csv' }];
+        return m;
+      })(),
+    ]),
     // Deliberately corrupted: no uuid — must be skipped with a readable reason.
     { name: 'Corrupted conversation', created_at: '2026-06-26T00:00:00.000000Z', updated_at: '2026-06-26T00:00:00.000000Z', chat_messages: [] },
   ];

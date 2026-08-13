@@ -404,6 +404,7 @@ self.onmessage = (ev: MessageEvent<ToWorker>) => {
         // The stored derived data predates the current schema — recompute it
         // from the conversations already on disk, no re-import needed.
         await buildDerived(await getAllConversations());
+        post({ t: 'progress', label: 'Done', pct: 1 });
         post({ t: 'rebuilt' });
       }
     } catch (err) {

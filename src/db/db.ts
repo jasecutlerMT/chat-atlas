@@ -70,7 +70,7 @@ export async function setMeta(key: string, value: unknown): Promise<void> {
 
 // ---- derived ----
 
-export const DERIVED_SCHEMA_VERSION = 5;
+export const DERIVED_SCHEMA_VERSION = 6;
 
 export interface DerivedBundle {
   schemaVersion?: number;
